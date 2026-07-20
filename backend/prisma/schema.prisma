@@ -1,0 +1,429 @@
+// 企业考勤管理系统 - Prisma Schema
+// 范围：单地区（尼日利亚），暂不做 regionId 隔离；后续多地区扩展时可在关键表补充 regionId 字段。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 2. 角色与权限
+// ---------------------------------------------------------------------------
+
+enum Role {
+  EMPLOYEE // 员工
+  LOCAL_MANAGER // 本地小管理者
+  LOCAL_HR // 本地 HR / HRIS 团队
+  HQ // 总部（只读）
+}
+
+// ---------------------------------------------------------------------------
+// 组织架构：部门（树形）、办公室、用户
+// ---------------------------------------------------------------------------
+
+model Department {
+  id        String       @id @default(uuid())
+  name      String
+  parentId  String?
+  parent    Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  children  Department[] @relation("DeptTree")
+  leaderId  String?
+  leader    User?        @relation("DeptLeader", fields: [leaderId], references: [id])
+  users     User[]       @relation("UserDepartment")
+  teams     Team[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+model Office {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  gpsLat    Float?
+  gpsLng    Float?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  officeStaff        User[]               @relation("UserOffice")
+  specialEventOffice SpecialEventOffice[]
+}
+
+// 团队/岗位（挂在部门下，作为打卡模式配置、规则模板的最小单元）
+model Team {
+  id           String     @id @default(uuid())
+  name         String
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  leaderId     String?
+  leader       User?      @relation("TeamLeader", fields: [leaderId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  members              User[]                      @relation("UserTeam")
+  modeConfig           TeamAttendanceModeConfig?
+  ruleTemplate         TeamAttendanceRuleTemplate?
+  officeAttendanceRule OfficeAttendanceRule?
+  shifts               Shift[]
+}
+
+model User {
+  id           String      @id @default(uuid())
+  employeeNo   String      @unique
+  name         String
+  email        String      @unique
+  passwordHash String
+  role         Role        @default(EMPLOYEE)
+  departmentId String?
+  department   Department? @relation("UserDepartment", fields: [departmentId], references: [id])
+  teamId       String?
+  team         Team?       @relation("UserTeam", fields: [teamId], references: [id])
+  managerId    String?
+  manager      User?       @relation("UserManager", fields: [managerId], references: [id])
+  subordinates User[]      @relation("UserManager")
+  position     String?
+  officeId     String?
+  office       Office?     @relation("UserOffice", fields: [officeId], references: [id])
+  hireDate     DateTime?
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  leadingDepartments Department[] @relation("DeptLeader")
+  leadingTeams       Team[]       @relation("TeamLeader")
+
+  refreshTokens        RefreshToken[]
+  attendanceRecords    AttendanceRecord[]       @relation("AttendanceUser")
+  scheduleAssignments  ScheduleAssignment[]     @relation("ScheduleUser")
+  locationPhotos       LocationCheckInPhoto[]   @relation("LocationPhotoUser")
+  verifiedPhotos       LocationCheckInPhoto[]   @relation("LocationPhotoVerifier")
+  leaveApplications    LeaveApplication[]       @relation("LeaveUser")
+  approvedLeaves       LeaveApplication[]       @relation("LeaveApprover")
+  overtimeApplications OvertimeApplication[]    @relation("OvertimeUser")
+  approvedOvertimes    OvertimeApplication[]    @relation("OvertimeApprover")
+  auditLogs            AuditLog[]
+  createdEvents        SpecialAttendanceEvent[] @relation("EventCreatedBy")
+  revokedEvents        SpecialAttendanceEvent[] @relation("EventRevokedBy")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// 3. 打卡模式总览：团队/岗位 -> 打卡模式映射
+// ---------------------------------------------------------------------------
+
+enum AttendanceMode {
+  OFFICE // 模式1：办公室打卡
+  SHIFT // 模式2：排班打卡
+  LOCATION // 模式3：定位打卡
+}
+
+model TeamAttendanceModeConfig {
+  id        String         @id @default(uuid())
+  teamId    String         @unique
+  team      Team           @relation(fields: [teamId], references: [id])
+  mode      AttendanceMode
+  updatedBy String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// 4. 模式1：办公室打卡 + 特殊事件全勤标记
+// ---------------------------------------------------------------------------
+
+// 10.3 考勤规则配置：办公室打卡的上下班时间、迟到/早退宽限时间（本地HR维护，按团队配置）
+model OfficeAttendanceRule {
+  id                String   @id @default(uuid())
+  teamId            String   @unique
+  team              Team     @relation(fields: [teamId], references: [id])
+  startTime         String // HH:mm
+  endTime           String // HH:mm
+  lateGraceMinutes  Int      @default(0)
+  earlyGraceMinutes Int      @default(0)
+  updatedBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+enum AttendanceStatus {
+  NORMAL // 正常
+  LATE // 迟到
+  EARLY_LEAVE // 早退
+  ABSENT // 缺勤
+  LEAVE // 请假
+  FULL_ATTENDANCE // 全勤（特殊事件/请假等自动标记）
+  PENDING // 定位打卡待核实
+}
+
+enum AttendanceSource {
+  OFFICE_CLOCK
+  SHIFT_CLOCK
+  LOCATION_CLOCK
+  SPECIAL_EVENT_AUTO
+  LEAVE_AUTO
+  MANUAL
+}
+
+// 每人每天一条汇总记录，clockIn/clockOut 为实际打卡时间
+model AttendanceRecord {
+  id                   String                  @id @default(uuid())
+  userId               String
+  user                 User                    @relation("AttendanceUser", fields: [userId], references: [id])
+  date                 DateTime                @db.Date
+  clockInAt            DateTime?
+  clockOutAt           DateTime?
+  status               AttendanceStatus        @default(PENDING)
+  source               AttendanceSource
+  lateMinutes          Int                     @default(0)
+  earlyMinutes         Int                     @default(0)
+  remark               String?
+  specialEventId       String?
+  specialEvent         SpecialAttendanceEvent? @relation(fields: [specialEventId], references: [id])
+  scheduleAssignmentId String?
+  scheduleAssignment   ScheduleAssignment?     @relation(fields: [scheduleAssignmentId], references: [id])
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@index([date])
+}
+
+enum SpecialEventType {
+  EXTREME_WEATHER // 极端天气
+  EMERGENCY_EVENT // 突发事件
+}
+
+model SpecialAttendanceEvent {
+  id              String               @id @default(uuid())
+  type            SpecialEventType
+  affectedOffices SpecialEventOffice[]
+  startTime       DateTime
+  endTime         DateTime
+  createdById     String
+  createdBy       User                 @relation("EventCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime             @default(now())
+  revokedById     String?
+  revokedBy       User?                @relation("EventRevokedBy", fields: [revokedById], references: [id])
+  revokedAt       DateTime?
+  remark          String?
+
+  attendanceRecords AttendanceRecord[]
+}
+
+// 事件 <-> 办公室 多对多关联表（affectedOfficeIds）
+model SpecialEventOffice {
+  id       String                 @id @default(uuid())
+  eventId  String
+  event    SpecialAttendanceEvent @relation(fields: [eventId], references: [id])
+  officeId String
+  office   Office                 @relation(fields: [officeId], references: [id])
+
+  @@unique([eventId, officeId])
+}
+
+// ---------------------------------------------------------------------------
+// 5. 模式2：排班打卡 + 排班变更留痕
+// ---------------------------------------------------------------------------
+
+model Shift {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id])
+  name      String // 如"早班"、"晚班"
+  startTime String // HH:mm
+  endTime   String // HH:mm
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments ScheduleAssignment[]
+
+  @@index([teamId])
+}
+
+model ScheduleAssignment {
+  id            String               @id @default(uuid())
+  userId        String
+  user          User                 @relation("ScheduleUser", fields: [userId], references: [id])
+  shiftId       String
+  shift         Shift                @relation(fields: [shiftId], references: [id])
+  date          DateTime             @db.Date
+  isTemporary   Boolean              @default(false)
+  changedFromId String? // 若为调整，指向被替换的历史排班记录
+  changedFrom   ScheduleAssignment?  @relation("ScheduleChangeHistory", fields: [changedFromId], references: [id])
+  changedTo     ScheduleAssignment[] @relation("ScheduleChangeHistory")
+  changedBy     String?
+  changedAt     DateTime?
+  createdAt     DateTime             @default(now())
+
+  attendanceRecords AttendanceRecord[]
+
+  @@index([userId, date])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// 6/7. 模式3：定位打卡 + 团队细分规则模板
+// ---------------------------------------------------------------------------
+
+enum VerifyStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model LocationCheckInPhoto {
+  id                  String       @id @default(uuid())
+  userId              String
+  user                User         @relation("LocationPhotoUser", fields: [userId], references: [id])
+  photoUrl            String
+  gpsLat              Float
+  gpsLng              Float
+  takenAt             DateTime
+  verifiedById        String?
+  verifiedBy          User?        @relation("LocationPhotoVerifier", fields: [verifiedById], references: [id])
+  verifiedAt          DateTime?
+  verifyStatus        VerifyStatus @default(PENDING)
+  monthlySummaryId    String?
+  businessMetricValue Int? // 如码牌团队当日部署商户数
+  createdAt           DateTime     @default(now())
+
+  @@index([userId, takenAt])
+}
+
+model TeamAttendanceRuleTemplate {
+  id                            String               @id @default(uuid())
+  teamId                        String               @unique
+  team                          Team                 @relation(fields: [teamId], references: [id])
+  requiresClockIn               Boolean              @default(true)
+  requiresClockOut              Boolean              @default(true)
+  requiresPhoto                 Boolean              @default(false)
+  photoIntervalThresholdMinutes Int?
+  requiresBusinessMetric        Boolean              @default(false)
+  businessMetricThreshold       Int?
+  businessMetricSource          String? // 待确认：API对接 or 人工录入
+  officeAssignmentMode          OfficeAssignmentMode @default(NONE)
+  createdAt                     DateTime             @default(now())
+  updatedAt                     DateTime             @updatedAt
+}
+
+enum OfficeAssignmentMode {
+  NEAREST_AUTO
+  FIXED
+  NONE
+}
+
+// ---------------------------------------------------------------------------
+// 8. 请假 / 加班申请与审批
+// ---------------------------------------------------------------------------
+
+// 请假类型可配置（10.3节），初始通过 seed 预置 事假/病假/年假/婚假/产假
+model LeaveTypeConfig {
+  id       String  @id @default(uuid())
+  code     String  @unique
+  name     String
+  isActive Boolean @default(true)
+
+  leaveApplications LeaveApplication[]
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model LeaveApplication {
+  id             String          @id @default(uuid())
+  userId         String
+  user           User            @relation("LeaveUser", fields: [userId], references: [id])
+  typeId         String
+  type           LeaveTypeConfig @relation(fields: [typeId], references: [id])
+  startTime      DateTime
+  endTime        DateTime
+  reason         String
+  attachmentUrl  String?
+  status         ApprovalStatus  @default(PENDING)
+  approverId     String?
+  approver       User?           @relation("LeaveApprover", fields: [approverId], references: [id])
+  approveComment String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([userId])
+}
+
+model OvertimeApplication {
+  id             String         @id @default(uuid())
+  userId         String
+  user           User           @relation("OvertimeUser", fields: [userId], references: [id])
+  date           DateTime       @db.Date
+  hours          Float
+  reason         String
+  status         ApprovalStatus @default(PENDING)
+  approverId     String?
+  approver       User?          @relation("OvertimeApprover", fields: [approverId], references: [id])
+  approveComment String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// 10. 法定节假日
+// ---------------------------------------------------------------------------
+
+model Holiday {
+  id        String   @id @default(uuid())
+  date      DateTime @db.Date
+  name      String
+  isWorkday Boolean  @default(false) // true = 调休上班日
+
+  @@unique([date])
+}
+
+// ---------------------------------------------------------------------------
+// 11. 统一审计日志
+// ---------------------------------------------------------------------------
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  REVOKE
+  VERIFY
+  APPROVE
+  REJECT
+  CANCEL
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  entityType String // SCHEDULE / SPECIAL_EVENT / LOCATION_CHECKIN / RULE_CONFIG ...
+  entityId   String
+  action     AuditAction
+  operatorId String
+  operator   User        @relation(fields: [operatorId], references: [id])
+  operatedAt DateTime    @default(now())
+  detail     Json?
+
+  @@index([entityType, entityId])
+  @@index([operatorId])
+}
