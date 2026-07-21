@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { AuditAction, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as XLSX from 'xlsx';
@@ -30,7 +30,17 @@ export class UsersService {
     private audit: AuditService,
   ) {}
 
+  // 除总部（只读、不参与打卡）外，所有角色都必须指定所属团队，否则考勤规则无从判定，
+  // 打卡时只能兜底为"未配置"（见问题反馈 2.2）
+  private assertTeamAssigned(role: Role | undefined, teamId: string | null | undefined) {
+    const effectiveRole = role ?? Role.EMPLOYEE;
+    if (effectiveRole !== Role.HQ && !teamId) {
+      throw new BadRequestException('除总部角色外，必须为员工指定所属团队，否则无法参与考勤规则判定');
+    }
+  }
+
   async create(dto: CreateUserDto, operatorId: string) {
+    this.assertTeamAssigned(dto.role, dto.teamId);
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const { password, ...rest } = dto;
     const user = await this.prisma.user.create({
@@ -74,6 +84,8 @@ export class UsersService {
 
   async update(id: string, dto: UpdateUserDto, operatorId: string) {
     const before = await this.prisma.user.findUniqueOrThrow({ where: { id }, select: SELECT_SAFE });
+    const effectiveTeamId = dto.teamId !== undefined ? dto.teamId : before.teamId;
+    this.assertTeamAssigned(dto.role ?? before.role, effectiveTeamId);
     const after = await this.prisma.user.update({
       where: { id },
       data: { ...dto, hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined },

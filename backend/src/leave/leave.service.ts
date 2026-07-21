@@ -1,20 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
-import { ApprovalStatus, AttendanceSource, AttendanceStatus, AuditAction } from '@prisma/client';
+import { ApprovalStatus, AttendanceSource, AttendanceStatus, AuditAction, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { CreateLeaveApplicationDto } from './dto/create-leave-application.dto';
-
-function eachDate(start: Date, end: Date): Date[] {
-  const days: Date[] = [];
-  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-  while (cur <= last) {
-    days.push(new Date(cur));
-    cur.setDate(cur.getDate() + 1);
-  }
-  return days;
-}
+import { eachBusinessDate } from '../common/date-utils';
 
 @Injectable()
 export class LeaveService {
@@ -67,6 +57,15 @@ export class LeaveService {
     });
   }
 
+  // 本地HR/HRIS 自己提交、待总部特批的申请（问题反馈 2.6）
+  findPendingSpecialApprovals() {
+    return this.prisma.leaveApplication.findMany({
+      where: { status: ApprovalStatus.PENDING, user: { role: Role.LOCAL_HR } },
+      include: { type: true, user: { select: { id: true, name: true, employeeNo: true, role: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async cancel(id: string, userId: string) {
     const app = await this.prisma.leaveApplication.findUniqueOrThrow({ where: { id } });
     if (app.userId !== userId) {
@@ -84,12 +83,54 @@ export class LeaveService {
     if (app.status !== ApprovalStatus.PENDING) {
       throw new BadRequestException('该申请已被处理');
     }
+    // 本地HR/HRIS 没有上级，不能审批自己提交的申请，否则等于自申自批（问题反馈 2.6）
+    if (app.userId === operatorId) {
+      throw new ForbiddenException('不能审批自己提交的申请，请联系总部进行特批');
+    }
+    return this.doApprove(app, comment, operatorId);
+  }
+
+  async reject(id: string, comment: string | undefined, operatorId: string) {
+    const app = await this.prisma.leaveApplication.findUniqueOrThrow({ where: { id } });
+    if (app.status !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('该申请已被处理');
+    }
+    if (app.userId === operatorId) {
+      throw new ForbiddenException('不能审批自己提交的申请，请联系总部进行特批');
+    }
+    return this.doReject(app, comment, operatorId);
+  }
+
+  // 总部特批：仅用于本地HR/HRIS 自己提交、系统内无更高级审批人可用的申请单
+  async specialApprove(id: string, comment: string | undefined, operatorId: string) {
+    const app = await this.prisma.leaveApplication.findUniqueOrThrow({ where: { id }, include: { user: true } });
+    if (app.status !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('该申请已被处理');
+    }
+    if (app.user.role !== Role.LOCAL_HR) {
+      throw new ForbiddenException('总部特批仅适用于本地HR/HRIS本人提交的申请');
+    }
+    return this.doApprove(app, comment, operatorId);
+  }
+
+  async specialReject(id: string, comment: string | undefined, operatorId: string) {
+    const app = await this.prisma.leaveApplication.findUniqueOrThrow({ where: { id }, include: { user: true } });
+    if (app.status !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('该申请已被处理');
+    }
+    if (app.user.role !== Role.LOCAL_HR) {
+      throw new ForbiddenException('总部特批仅适用于本地HR/HRIS本人提交的申请');
+    }
+    return this.doReject(app, comment, operatorId);
+  }
+
+  private async doApprove(app: { id: string; userId: string; startTime: Date; endTime: Date }, comment: string | undefined, operatorId: string) {
     const updated = await this.prisma.leaveApplication.update({
-      where: { id },
+      where: { id: app.id },
       data: { status: ApprovalStatus.APPROVED, approverId: operatorId, approveComment: comment },
     });
 
-    for (const day of eachDate(app.startTime, app.endTime)) {
+    for (const day of eachBusinessDate(app.startTime, app.endTime)) {
       await this.prisma.attendanceRecord.upsert({
         where: { userId_date: { userId: app.userId, date: day } },
         create: {
@@ -109,7 +150,7 @@ export class LeaveService {
 
     await this.audit.log({
       entityType: 'LEAVE_APPLICATION',
-      entityId: id,
+      entityId: app.id,
       action: AuditAction.APPROVE,
       operatorId,
       detail: { comment },
@@ -118,18 +159,14 @@ export class LeaveService {
     return updated;
   }
 
-  async reject(id: string, comment: string | undefined, operatorId: string) {
-    const app = await this.prisma.leaveApplication.findUniqueOrThrow({ where: { id } });
-    if (app.status !== ApprovalStatus.PENDING) {
-      throw new BadRequestException('该申请已被处理');
-    }
+  private async doReject(app: { id: string }, comment: string | undefined, operatorId: string) {
     const updated = await this.prisma.leaveApplication.update({
-      where: { id },
+      where: { id: app.id },
       data: { status: ApprovalStatus.REJECTED, approverId: operatorId, approveComment: comment },
     });
     await this.audit.log({
       entityType: 'LEAVE_APPLICATION',
-      entityId: id,
+      entityId: app.id,
       action: AuditAction.REJECT,
       operatorId,
       detail: { comment },

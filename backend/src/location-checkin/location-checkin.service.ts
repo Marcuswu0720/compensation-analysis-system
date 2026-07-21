@@ -1,16 +1,33 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, VerifyStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { combineBusinessDateAndTime, toBusinessDateOnly } from '../common/date-utils';
 
 interface UploadParams {
   userId: string;
-  photoUrl: string;
+  photoBuffer: Buffer;
+  mimeType: string;
   gpsLat: number;
   gpsLng: number;
   takenAt?: string;
   businessMetricValue?: number;
 }
+
+const PHOTO_LIST_SELECT = {
+  id: true,
+  userId: true,
+  photoUrl: true,
+  gpsLat: true,
+  gpsLng: true,
+  takenAt: true,
+  verifiedById: true,
+  verifiedAt: true,
+  verifyStatus: true,
+  businessMetricValue: true,
+  monthlySummaryId: true,
+  createdAt: true,
+} as const;
 
 @Injectable()
 export class LocationCheckinService {
@@ -20,6 +37,7 @@ export class LocationCheckinService {
   ) {}
 
   // 6.3: 定位照片、记录时间、记录人三者必须一并保存；7.2: 两张照片间隔超阈值触发预警（记入审计日志作为质检介入依据）
+  // 照片二进制内容直接存数据库（而非本地磁盘），避免云端免费实例磁盘不持久导致审核后照片打不开（问题反馈 4.2）
   async upload(params: UploadParams) {
     const takenAt = params.takenAt ? new Date(params.takenAt) : new Date();
 
@@ -28,15 +46,22 @@ export class LocationCheckinService {
       ? await this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId: user.teamId } })
       : null;
 
-    const photo = await this.prisma.locationCheckInPhoto.create({
+    const created = await this.prisma.locationCheckInPhoto.create({
       data: {
         userId: params.userId,
-        photoUrl: params.photoUrl,
+        photoUrl: '', // 下面用自身 id 回填
+        photoData: new Uint8Array(params.photoBuffer),
+        photoMimeType: params.mimeType,
         gpsLat: params.gpsLat,
         gpsLng: params.gpsLng,
         takenAt,
         businessMetricValue: params.businessMetricValue,
       },
+    });
+    const photo = await this.prisma.locationCheckInPhoto.update({
+      where: { id: created.id },
+      data: { photoUrl: `/api/location-checkin/${created.id}/photo` },
+      select: PHOTO_LIST_SELECT,
     });
 
     if (ruleTemplate?.photoIntervalThresholdMinutes) {
@@ -66,6 +91,17 @@ export class LocationCheckinService {
     return photo;
   }
 
+  async getPhotoBinary(id: string) {
+    const photo = await this.prisma.locationCheckInPhoto.findUnique({
+      where: { id },
+      select: { photoData: true, photoMimeType: true },
+    });
+    if (!photo) {
+      throw new NotFoundException('照片不存在');
+    }
+    return photo;
+  }
+
   findAll(filters: { userId?: string; teamId?: string; from?: string; to?: string; verifyStatus?: VerifyStatus }) {
     return this.prisma.locationCheckInPhoto.findMany({
       where: {
@@ -77,7 +113,7 @@ export class LocationCheckinService {
         },
         user: filters.teamId ? { teamId: filters.teamId } : undefined,
       },
-      include: { user: { select: { id: true, name: true, employeeNo: true, team: true } } },
+      select: { ...PHOTO_LIST_SELECT, user: { select: { id: true, name: true, employeeNo: true, team: true } } },
       orderBy: { takenAt: 'asc' },
     });
   }
@@ -85,19 +121,18 @@ export class LocationCheckinService {
   findPending() {
     return this.prisma.locationCheckInPhoto.findMany({
       where: { verifyStatus: VerifyStatus.PENDING },
-      include: { user: { select: { id: true, name: true, employeeNo: true, team: true } } },
+      select: { ...PHOTO_LIST_SELECT, user: { select: { id: true, name: true, employeeNo: true, team: true } } },
       orderBy: { takenAt: 'asc' },
     });
   }
 
-  // 打卡轨迹：某员工某天的照片按时间顺序展示
+  // 打卡轨迹：某员工某天的照片按时间顺序展示（按业务时区取自然日边界，见问题反馈 2.5 的统一处理方式）
   findTrajectory(userId: string, date: string) {
-    const day = new Date(date);
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const start = combineBusinessDateAndTime(toBusinessDateOnly(date), '00:00');
+    const end = new Date(start.getTime() + 24 * 60 * 60000);
     return this.prisma.locationCheckInPhoto.findMany({
       where: { userId, takenAt: { gte: start, lt: end } },
+      select: PHOTO_LIST_SELECT,
       orderBy: { takenAt: 'asc' },
     });
   }
@@ -110,6 +145,7 @@ export class LocationCheckinService {
     const updated = await this.prisma.locationCheckInPhoto.update({
       where: { id },
       data: { verifyStatus: status, verifiedById: operatorId, verifiedAt: new Date() },
+      select: PHOTO_LIST_SELECT,
     });
 
     await this.audit.log({

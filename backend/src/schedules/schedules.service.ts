@@ -6,11 +6,7 @@ import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { BatchGenerateDto } from './dto/batch-generate.dto';
 import { ChangeAssignmentDto } from './dto/change-assignment.dto';
-
-function toDateOnly(d: Date | string): Date {
-  const x = new Date(d);
-  return new Date(x.getFullYear(), x.getMonth(), x.getDate());
-}
+import { toBusinessDateOnly } from '../common/date-utils';
 
 @Injectable()
 export class SchedulesService {
@@ -39,8 +35,8 @@ export class SchedulesService {
   // 5.2: 排班表支持按周期批量生成（按周/按月），跳过已存在排班的日期避免误覆盖
   async batchGenerate(dto: BatchGenerateDto, operatorId: string) {
     const shift = await this.prisma.shift.findUniqueOrThrow({ where: { id: dto.shiftId } });
-    const from = toDateOnly(dto.dateFrom);
-    const to = toDateOnly(dto.dateTo);
+    const from = toBusinessDateOnly(dto.dateFrom);
+    const to = toBusinessDateOnly(dto.dateTo);
     if (to < from) {
       throw new BadRequestException('结束日期不能早于开始日期');
     }
@@ -51,7 +47,7 @@ export class SchedulesService {
     for (const userId of dto.userIds) {
       const cur = new Date(from);
       while (cur <= to) {
-        if (!dto.daysOfWeek || dto.daysOfWeek.includes(cur.getDay())) {
+        if (!dto.daysOfWeek || dto.daysOfWeek.includes(cur.getUTCDay())) {
           const date = new Date(cur);
           const existing = await this.prisma.scheduleAssignment.findFirst({
             where: { userId, date },
@@ -66,7 +62,7 @@ export class SchedulesService {
             created.push(assignment.id);
           }
         }
-        cur.setDate(cur.getDate() + 1);
+        cur.setUTCDate(cur.getUTCDate() + 1);
       }
     }
 
@@ -113,7 +109,7 @@ export class SchedulesService {
   // 临时加排班（原本无排班的日期）
   async addTemporaryAssignment(userId: string, shiftId: string, date: string, operatorId: string) {
     const assignment = await this.prisma.scheduleAssignment.create({
-      data: { userId, shiftId, date: toDateOnly(date), isTemporary: true, changedBy: operatorId, changedAt: new Date() },
+      data: { userId, shiftId, date: toBusinessDateOnly(date), isTemporary: true, changedBy: operatorId, changedAt: new Date() },
     });
     await this.audit.log({
       entityType: 'SCHEDULE_ASSIGNMENT',
@@ -130,7 +126,7 @@ export class SchedulesService {
     const rows = await this.prisma.scheduleAssignment.findMany({
       where: {
         userId: filters.userId,
-        date: filters.from || filters.to ? { gte: filters.from ? toDateOnly(filters.from) : undefined, lte: filters.to ? toDateOnly(filters.to) : undefined } : undefined,
+        date: filters.from || filters.to ? { gte: filters.from ? toBusinessDateOnly(filters.from) : undefined, lte: filters.to ? toBusinessDateOnly(filters.to) : undefined } : undefined,
         user: filters.teamId ? { teamId: filters.teamId } : undefined,
       },
       include: { shift: true, user: { select: { id: true, name: true, employeeNo: true } } },
@@ -148,7 +144,7 @@ export class SchedulesService {
   // 排班变更历史（含被替换的历史记录）
   async findHistory(userId: string, date: string) {
     return this.prisma.scheduleAssignment.findMany({
-      where: { userId, date: toDateOnly(date) },
+      where: { userId, date: toBusinessDateOnly(date) },
       include: { shift: true },
       orderBy: { createdAt: 'asc' },
     });

@@ -8,6 +8,7 @@ export const STATUS_LABEL: Record<AttendanceStatus, string> = {
   LEAVE: '请假',
   FULL_ATTENDANCE: '全勤',
   PENDING: '待核实/未打卡',
+  UNCONFIGURED: '未配置考勤规则',
 };
 
 export const STATUS_COLOR: Record<AttendanceStatus, string> = {
@@ -18,6 +19,7 @@ export const STATUS_COLOR: Record<AttendanceStatus, string> = {
   LEAVE: 'blue',
   FULL_ATTENDANCE: 'purple',
   PENDING: 'default',
+  UNCONFIGURED: 'magenta',
 };
 
 export const APPROVAL_LABEL: Record<ApprovalStatus, string> = {

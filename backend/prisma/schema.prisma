@@ -51,6 +51,7 @@ model Office {
 
   officeStaff        User[]               @relation("UserOffice")
   specialEventOffice SpecialEventOffice[]
+  matchedAttendance  AttendanceRecord[]
 }
 
 // 团队/岗位（挂在部门下，作为打卡模式配置、规则模板的最小单元）
@@ -168,6 +169,7 @@ enum AttendanceStatus {
   LEAVE // 请假
   FULL_ATTENDANCE // 全勤（特殊事件/请假等自动标记）
   PENDING // 定位打卡待核实
+  UNCONFIGURED // 员工未配置团队或团队未配置考勤规则，无法判定，需HR尽快配置
 }
 
 enum AttendanceSource {
@@ -191,6 +193,10 @@ model AttendanceRecord {
   source               AttendanceSource
   lateMinutes          Int                     @default(0)
   earlyMinutes         Int                     @default(0)
+  clockInLat           Float?
+  clockInLng           Float?
+  matchedOfficeId      String?
+  matchedOffice        Office?                 @relation(fields: [matchedOfficeId], references: [id])
   remark               String?
   specialEventId       String?
   specialEvent         SpecialAttendanceEvent? @relation(fields: [specialEventId], references: [id])
@@ -291,7 +297,9 @@ model LocationCheckInPhoto {
   id                  String       @id @default(uuid())
   userId              String
   user                User         @relation("LocationPhotoUser", fields: [userId], references: [id])
-  photoUrl            String
+  photoUrl            String // 供前端展示的访问路径（/api/location-checkin/:id/photo）
+  photoData           Bytes // 图片二进制内容，存数据库而非本地磁盘，避免云端免费实例磁盘不持久导致照片丢失
+  photoMimeType       String       @default("image/jpeg")
   gpsLat              Float
   gpsLng              Float
   takenAt             DateTime

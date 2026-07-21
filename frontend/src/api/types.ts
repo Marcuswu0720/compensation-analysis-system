@@ -9,7 +9,8 @@ export type AttendanceStatus =
   | 'ABSENT'
   | 'LEAVE'
   | 'FULL_ATTENDANCE'
-  | 'PENDING';
+  | 'PENDING'
+  | 'UNCONFIGURED';
 
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 
@@ -82,6 +83,9 @@ export interface AttendanceRecord {
   source: string;
   lateMinutes: number;
   earlyMinutes: number;
+  clockInLat: number | null;
+  clockInLng: number | null;
+  matchedOffice?: { id: string; name: string } | null;
   remark: string | null;
   user?: { id: string; name: string; employeeNo: string };
 }

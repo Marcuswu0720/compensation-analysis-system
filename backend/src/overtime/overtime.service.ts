@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
-import { ApprovalStatus, AuditAction } from '@prisma/client';
+import { ApprovalStatus, AuditAction, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { CreateOvertimeDto } from './dto/create-overtime.dto';
@@ -29,6 +29,15 @@ export class OvertimeService {
     });
   }
 
+  // 本地HR/HRIS 自己提交、待总部特批的申请（问题反馈 2.6）
+  findPendingSpecialApprovals() {
+    return this.prisma.overtimeApplication.findMany({
+      where: { status: ApprovalStatus.PENDING, user: { role: Role.LOCAL_HR } },
+      include: { user: { select: { id: true, name: true, employeeNo: true, role: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async cancel(id: string, userId: string) {
     const app = await this.prisma.overtimeApplication.findUniqueOrThrow({ where: { id } });
     if (app.userId !== userId) {
@@ -45,6 +54,46 @@ export class OvertimeService {
     if (app.status !== ApprovalStatus.PENDING) {
       throw new BadRequestException('该申请已被处理');
     }
+    if (app.userId === operatorId) {
+      throw new ForbiddenException('不能审批自己提交的申请，请联系总部进行特批');
+    }
+    return this.doApprove(id, comment, operatorId);
+  }
+
+  async reject(id: string, comment: string | undefined, operatorId: string) {
+    const app = await this.prisma.overtimeApplication.findUniqueOrThrow({ where: { id } });
+    if (app.status !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('该申请已被处理');
+    }
+    if (app.userId === operatorId) {
+      throw new ForbiddenException('不能审批自己提交的申请，请联系总部进行特批');
+    }
+    return this.doReject(id, comment, operatorId);
+  }
+
+  async specialApprove(id: string, comment: string | undefined, operatorId: string) {
+    const app = await this.prisma.overtimeApplication.findUniqueOrThrow({ where: { id }, include: { user: true } });
+    if (app.status !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('该申请已被处理');
+    }
+    if (app.user.role !== Role.LOCAL_HR) {
+      throw new ForbiddenException('总部特批仅适用于本地HR/HRIS本人提交的申请');
+    }
+    return this.doApprove(id, comment, operatorId);
+  }
+
+  async specialReject(id: string, comment: string | undefined, operatorId: string) {
+    const app = await this.prisma.overtimeApplication.findUniqueOrThrow({ where: { id }, include: { user: true } });
+    if (app.status !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('该申请已被处理');
+    }
+    if (app.user.role !== Role.LOCAL_HR) {
+      throw new ForbiddenException('总部特批仅适用于本地HR/HRIS本人提交的申请');
+    }
+    return this.doReject(id, comment, operatorId);
+  }
+
+  private async doApprove(id: string, comment: string | undefined, operatorId: string) {
     const updated = await this.prisma.overtimeApplication.update({
       where: { id },
       data: { status: ApprovalStatus.APPROVED, approverId: operatorId, approveComment: comment },
@@ -53,11 +102,7 @@ export class OvertimeService {
     return updated;
   }
 
-  async reject(id: string, comment: string | undefined, operatorId: string) {
-    const app = await this.prisma.overtimeApplication.findUniqueOrThrow({ where: { id } });
-    if (app.status !== ApprovalStatus.PENDING) {
-      throw new BadRequestException('该申请已被处理');
-    }
+  private async doReject(id: string, comment: string | undefined, operatorId: string) {
     const updated = await this.prisma.overtimeApplication.update({
       where: { id },
       data: { status: ApprovalStatus.REJECTED, approverId: operatorId, approveComment: comment },

@@ -8,6 +8,7 @@ import MyAttendance from './pages/MyAttendance';
 import LeaveApply from './pages/leave/Apply';
 import MyApplications from './pages/leave/MyApplications';
 import Approval from './pages/Approval';
+import SpecialApproval from './pages/SpecialApproval';
 import LocationCheckinReview from './pages/LocationCheckinReview';
 import Schedule from './pages/Schedule';
 import SpecialEvents from './pages/SpecialEvents';
@@ -66,6 +67,14 @@ function App() {
           element={
             <ProtectedRoute roles={['LOCAL_HR']}>
               <Approval />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/special-approval"
+          element={
+            <ProtectedRoute roles={['HQ']}>
+              <SpecialApproval />
             </ProtectedRoute>
           }
         />

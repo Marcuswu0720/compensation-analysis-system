@@ -1,24 +1,49 @@
 import { useState } from 'react';
-import { Button, Card, DatePicker, Form, Input, Select, Space, Table, Tabs, Typography, message } from 'antd';
+import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { schedulesApi } from '../api/schedules';
 import { teamsApi, usersApi } from '../api/org';
 import { useAuthStore } from '../store/authStore';
+import type { ScheduleAssignment } from '../api/types';
 
 function AssignmentsTab() {
+  const user = useAuthStore((s) => s.user);
+  const isHr = user?.role === 'LOCAL_HR';
+  const queryClient = useQueryClient();
   const [teamId, setTeamId] = useState<string>();
   const [range, setRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([dayjs().startOf('week'), dayjs().endOf('week')]);
-  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
+  const [changeTarget, setChangeTarget] = useState<ScheduleAssignment | null>(null);
+  const [newShiftId, setNewShiftId] = useState<string>();
+  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list, enabled: isHr || user?.role === 'LOCAL_MANAGER' });
   const { data = [] } = useQuery({
     queryKey: ['assignments', teamId, range[0].format('YYYY-MM-DD'), range[1].format('YYYY-MM-DD')],
     queryFn: () => schedulesApi.listAssignments({ teamId, from: range[0].format('YYYY-MM-DD'), to: range[1].format('YYYY-MM-DD') }),
+  });
+  // 调整班次时，班次候选需与目标员工当前班次所在团队一致
+  const { data: shiftOptions = [] } = useQuery({
+    queryKey: ['shifts', changeTarget?.shift.teamId],
+    queryFn: () => schedulesApi.listShifts(changeTarget?.shift.teamId),
+    enabled: !!changeTarget,
+  });
+
+  const changeMutation = useMutation({
+    mutationFn: () => schedulesApi.changeAssignment(changeTarget!.id, newShiftId!),
+    onSuccess: () => {
+      message.success('排班已调整，变更记录已留痕');
+      setChangeTarget(null);
+      setNewShiftId(undefined);
+      queryClient.invalidateQueries({ queryKey: ['assignments'] });
+    },
+    onError: (e: any) => message.error(e?.response?.data?.message ?? '调整失败'),
   });
 
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
-        <Select style={{ width: 200 }} placeholder="选择团队" allowClear value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
+        {(isHr || user?.role === 'LOCAL_MANAGER') && (
+          <Select style={{ width: 200 }} placeholder="选择团队" allowClear value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
+        )}
         <DatePicker.RangePicker value={range} onChange={(v) => v && setRange(v as [dayjs.Dayjs, dayjs.Dayjs])} />
       </Space>
       <Table
@@ -29,8 +54,38 @@ function AssignmentsTab() {
           { title: '日期', dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },
           { title: '班次', render: (_, r) => `${r.shift.name} ${r.shift.startTime}-${r.shift.endTime}` },
           { title: '是否临时调整', dataIndex: 'isTemporary', render: (v) => (v ? '是' : '否') },
+          ...(isHr
+            ? [
+                {
+                  title: '操作',
+                  render: (_: unknown, r: ScheduleAssignment) => (
+                    <Button size="small" onClick={() => setChangeTarget(r)}>
+                      调整班次
+                    </Button>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
+      <Modal
+        title={changeTarget ? `调整 ${changeTarget.user.name} ${dayjs(changeTarget.date).format('YYYY-MM-DD')} 的班次` : ''}
+        open={!!changeTarget}
+        onCancel={() => setChangeTarget(null)}
+        onOk={() => changeMutation.mutate()}
+        confirmLoading={changeMutation.isPending}
+        okButtonProps={{ disabled: !newShiftId }}
+      >
+        <Select
+          style={{ width: '100%' }}
+          placeholder="选择新班次"
+          value={newShiftId}
+          onChange={setNewShiftId}
+          options={shiftOptions
+            .filter((s) => s.id !== changeTarget?.shiftId)
+            .map((s) => ({ value: s.id, label: `${s.name} ${s.startTime}-${s.endTime}` }))}
+        />
+      </Modal>
     </div>
   );
 }

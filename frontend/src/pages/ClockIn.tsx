@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Alert, Button, Card, Space, Typography, Upload, InputNumber, message, Descriptions } from 'antd';
+import { Alert, Button, Card, DatePicker, Empty, Image, Space, Typography, Upload, InputNumber, message, Descriptions } from 'antd';
 import { UploadOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import dayjs from 'dayjs';
+import dayjs, { type Dayjs } from 'dayjs';
 import { attendanceApi } from '../api/attendance';
 import { locationCheckinApi } from '../api/locationCheckin';
-import { STATUS_LABEL, STATUS_COLOR, MODE_LABEL } from '../utils/status';
+import { STATUS_LABEL, STATUS_COLOR, MODE_LABEL, VERIFY_LABEL, VERIFY_COLOR } from '../utils/status';
+import { useAuthStore } from '../store/authStore';
 import { Tag } from 'antd';
+
+const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000/api').replace(/\/api\/?$/, '');
 
 function getGeolocation(): Promise<{ lat: number; lng: number }> {
   return new Promise((resolve, reject) => {
@@ -24,9 +27,17 @@ function getGeolocation(): Promise<{ lat: number; lng: number }> {
 
 export default function ClockIn() {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
   const [businessMetric, setBusinessMetric] = useState<number | null>(null);
+  const [trajectoryDate, setTrajectoryDate] = useState<Dayjs>(dayjs());
 
   const { data: today, refetch } = useQuery({ queryKey: ['attendance-today'], queryFn: attendanceApi.today });
+  // 员工本人查看自己的定位打卡照片轨迹（问题反馈 4.3：之前只能看到全勤/异常，看不到自己实际拍过的照片）
+  const { data: myPhotos = [] } = useQuery({
+    queryKey: ['my-location-trajectory', trajectoryDate.format('YYYY-MM-DD')],
+    queryFn: () => locationCheckinApi.trajectory(user!.id, trajectoryDate.format('YYYY-MM-DD')),
+    enabled: !!user,
+  });
 
   const clockInMutation = useMutation({
     mutationFn: async () => {
@@ -38,8 +49,8 @@ export default function ClockIn() {
       }
       return attendanceApi.clockIn(coords);
     },
-    onSuccess: () => {
-      message.success('上班打卡成功');
+    onSuccess: (record) => {
+      message.success(record.matchedOffice ? `上班打卡成功，已自动匹配最近办公室：${record.matchedOffice.name}` : '上班打卡成功');
       refetch();
       queryClient.invalidateQueries({ queryKey: ['attendance-calendar'] });
     },
@@ -68,7 +79,10 @@ export default function ClockIn() {
       const coords = await getGeolocation();
       return locationCheckinApi.upload({ photo: file, lat: coords.lat, lng: coords.lng, businessMetricValue: businessMetric ?? undefined });
     },
-    onSuccess: () => message.success('照片上传成功，等待核实'),
+    onSuccess: () => {
+      message.success('照片上传成功，等待核实');
+      queryClient.invalidateQueries({ queryKey: ['my-location-trajectory'] });
+    },
     onError: (e: any) => message.error(e?.response?.data?.message ?? '上传失败，请确认已授权定位权限'),
   });
 
@@ -91,6 +105,9 @@ export default function ClockIn() {
             )}
           </Descriptions.Item>
           {today?.record?.clockInAt && <Descriptions.Item label="上班打卡时间">{dayjs(today.record.clockInAt).format('HH:mm:ss')}</Descriptions.Item>}
+          {today?.record?.matchedOffice && (
+            <Descriptions.Item label="定位匹配办公室">{today.record.matchedOffice.name}</Descriptions.Item>
+          )}
           {today?.record?.clockOutAt && <Descriptions.Item label="下班打卡时间">{dayjs(today.record.clockOutAt).format('HH:mm:ss')}</Descriptions.Item>}
         </Descriptions>
 
@@ -140,6 +157,26 @@ export default function ClockIn() {
           )}
         </div>
       </Card>
+
+      {rule?.requiresPhoto && (
+        <Card title="我的定位打卡记录" style={{ marginTop: 16 }}>
+          <DatePicker value={trajectoryDate} onChange={(v) => v && setTrajectoryDate(v)} style={{ marginBottom: 16 }} />
+          {myPhotos.length === 0 ? (
+            <Empty description="当天暂无打卡照片" />
+          ) : (
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {myPhotos.map((photo, idx) => (
+                <Card key={photo.id} size="small" style={{ width: 160 }} title={`#${idx + 1} ${dayjs(photo.takenAt).format('HH:mm:ss')}`}>
+                  <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={136} />
+                  <div style={{ marginTop: 8 }}>
+                    <Tag color={VERIFY_COLOR[photo.verifyStatus]}>{VERIFY_LABEL[photo.verifyStatus]}</Tag>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

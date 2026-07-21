@@ -44,6 +44,7 @@ const MENU_ITEMS: MenuDef[] = [
   { key: '/leave/apply', label: '请假/加班申请', icon: <FileTextOutlined />, roles: ['EMPLOYEE', 'LOCAL_MANAGER', 'LOCAL_HR'] },
   { key: '/leave/my-applications', label: '我的申请记录', icon: <FileTextOutlined />, roles: ['EMPLOYEE', 'LOCAL_MANAGER', 'LOCAL_HR'] },
   { key: '/approval', label: '待审批列表', icon: <AuditOutlined />, roles: ['LOCAL_HR'] },
+  { key: '/special-approval', label: '总部特批', icon: <AuditOutlined />, roles: ['HQ'] },
   { key: '/location-checkin/review', label: '定位打卡核实', icon: <EnvironmentOutlined />, roles: ['LOCAL_MANAGER', 'LOCAL_HR'] },
   { key: '/schedule', label: '排班表', icon: <ScheduleOutlined />, roles: ['EMPLOYEE', 'LOCAL_MANAGER', 'LOCAL_HR'] },
   { key: '/special-events', label: '特殊事件标记', icon: <WarningOutlined />, roles: ['LOCAL_HR'] },

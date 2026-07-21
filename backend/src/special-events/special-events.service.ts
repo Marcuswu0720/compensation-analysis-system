@@ -3,17 +3,7 @@ import { AttendanceSource, AttendanceStatus, AuditAction } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { CreateSpecialEventDto } from './dto/create-special-event.dto';
-
-function eachDate(start: Date, end: Date): Date[] {
-  const days: Date[] = [];
-  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-  while (cur <= last) {
-    days.push(new Date(cur));
-    cur.setDate(cur.getDate() + 1);
-  }
-  return days;
-}
+import { eachBusinessDate } from '../common/date-utils';
 
 @Injectable()
 export class SpecialEventsService {
@@ -47,7 +37,7 @@ export class SpecialEventsService {
       select: { id: true },
     });
 
-    const days = eachDate(startTime, endTime);
+    const days = eachBusinessDate(startTime, endTime);
     for (const user of affectedUsers) {
       for (const day of days) {
         await this.prisma.attendanceRecord.upsert({
