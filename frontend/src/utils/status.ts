@@ -1,15 +1,5 @@
+import { useTranslation } from 'react-i18next';
 import type { AttendanceStatus, ApprovalStatus, VerifyStatus, AttendanceMode, SpecialEventType, Role } from '../api/types';
-
-export const STATUS_LABEL: Record<AttendanceStatus, string> = {
-  NORMAL: '正常',
-  LATE: '迟到',
-  EARLY_LEAVE: '早退',
-  ABSENT: '缺勤',
-  LEAVE: '请假',
-  FULL_ATTENDANCE: '全勤',
-  PENDING: '待核实/未打卡',
-  UNCONFIGURED: '未配置考勤规则',
-};
 
 export const STATUS_COLOR: Record<AttendanceStatus, string> = {
   NORMAL: 'green',
@@ -22,24 +12,11 @@ export const STATUS_COLOR: Record<AttendanceStatus, string> = {
   UNCONFIGURED: 'magenta',
 };
 
-export const APPROVAL_LABEL: Record<ApprovalStatus, string> = {
-  PENDING: '待审批',
-  APPROVED: '已通过',
-  REJECTED: '已驳回',
-  CANCELLED: '已撤销',
-};
-
 export const APPROVAL_COLOR: Record<ApprovalStatus, string> = {
   PENDING: 'gold',
   APPROVED: 'green',
   REJECTED: 'red',
   CANCELLED: 'default',
-};
-
-export const VERIFY_LABEL: Record<VerifyStatus, string> = {
-  PENDING: '待核实',
-  APPROVED: '已通过',
-  REJECTED: '已驳回',
 };
 
 export const VERIFY_COLOR: Record<VerifyStatus, string> = {
@@ -48,20 +25,62 @@ export const VERIFY_COLOR: Record<VerifyStatus, string> = {
   REJECTED: 'red',
 };
 
-export const MODE_LABEL: Record<AttendanceMode, string> = {
-  OFFICE: '办公室打卡',
-  SHIFT: '排班打卡',
-  LOCATION: '定位打卡',
-};
+export function useStatusLabel(): Record<AttendanceStatus, string> {
+  const { t } = useTranslation();
+  return {
+    NORMAL: t('status.NORMAL'),
+    LATE: t('status.LATE'),
+    EARLY_LEAVE: t('status.EARLY_LEAVE'),
+    ABSENT: t('status.ABSENT'),
+    LEAVE: t('status.LEAVE'),
+    FULL_ATTENDANCE: t('status.FULL_ATTENDANCE'),
+    PENDING: t('status.PENDING'),
+    UNCONFIGURED: t('status.UNCONFIGURED'),
+  };
+}
 
-export const EVENT_TYPE_LABEL: Record<SpecialEventType, string> = {
-  EXTREME_WEATHER: '极端天气',
-  EMERGENCY_EVENT: '突发事件',
-};
+export function useApprovalLabel(): Record<ApprovalStatus, string> {
+  const { t } = useTranslation();
+  return {
+    PENDING: t('approvalStatus.PENDING'),
+    APPROVED: t('approvalStatus.APPROVED'),
+    REJECTED: t('approvalStatus.REJECTED'),
+    CANCELLED: t('approvalStatus.CANCELLED'),
+  };
+}
 
-export const ROLE_LABEL: Record<Role, string> = {
-  EMPLOYEE: '员工',
-  LOCAL_MANAGER: '本地小管理者',
-  LOCAL_HR: '本地HR/HRIS',
-  HQ: '总部（只读）',
-};
+export function useVerifyLabel(): Record<VerifyStatus, string> {
+  const { t } = useTranslation();
+  return {
+    PENDING: t('verifyStatus.PENDING'),
+    APPROVED: t('verifyStatus.APPROVED'),
+    REJECTED: t('verifyStatus.REJECTED'),
+  };
+}
+
+export function useModeLabel(): Record<AttendanceMode, string> {
+  const { t } = useTranslation();
+  return {
+    OFFICE: t('mode.OFFICE'),
+    SHIFT: t('mode.SHIFT'),
+    LOCATION: t('mode.LOCATION'),
+  };
+}
+
+export function useEventTypeLabel(): Record<SpecialEventType, string> {
+  const { t } = useTranslation();
+  return {
+    EXTREME_WEATHER: t('eventType.EXTREME_WEATHER'),
+    EMERGENCY_EVENT: t('eventType.EMERGENCY_EVENT'),
+  };
+}
+
+export function useRoleLabel(): Record<Role, string> {
+  const { t } = useTranslation();
+  return {
+    EMPLOYEE: t('roles.EMPLOYEE'),
+    LOCAL_MANAGER: t('roles.LOCAL_MANAGER'),
+    LOCAL_HR: t('roles.LOCAL_HR'),
+    HQ: t('roles.HQ'),
+  };
+}

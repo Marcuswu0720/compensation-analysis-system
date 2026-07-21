@@ -1,16 +1,19 @@
 import { Button, Card, Popconfirm, Table, Tabs, Tag, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { leaveApi, overtimeApi } from '../../api/leaveOvertime';
-import { APPROVAL_COLOR, APPROVAL_LABEL } from '../../utils/status';
+import { APPROVAL_COLOR, useApprovalLabel } from '../../utils/status';
 
 function LeaveTab() {
+  const { t } = useTranslation();
+  const approvalLabel = useApprovalLabel();
   const queryClient = useQueryClient();
   const { data = [] } = useQuery({ queryKey: ['my-leave'], queryFn: leaveApi.mine });
   const cancelMutation = useMutation({
     mutationFn: leaveApi.cancel,
     onSuccess: () => {
-      message.success('已撤销');
+      message.success(t('myApplications.revoked'));
       queryClient.invalidateQueries({ queryKey: ['my-leave'] });
     },
   });
@@ -22,19 +25,19 @@ function LeaveTab() {
       dataSource={data}
       pagination={{ pageSize: 10 }}
       columns={[
-        { title: '类型', dataIndex: ['type', 'name'] },
-        { title: '开始时间', dataIndex: 'startTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
-        { title: '结束时间', dataIndex: 'endTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
-        { title: '事由', dataIndex: 'reason' },
-        { title: '状态', dataIndex: 'status', render: (v) => <Tag color={APPROVAL_COLOR[v as keyof typeof APPROVAL_COLOR]}>{APPROVAL_LABEL[v as keyof typeof APPROVAL_LABEL]}</Tag> },
-        { title: '审批意见', dataIndex: 'approveComment' },
+        { title: t('common.type'), dataIndex: ['type', 'name'] },
+        { title: t('common.startTime'), dataIndex: 'startTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
+        { title: t('common.endTime'), dataIndex: 'endTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
+        { title: t('common.reason'), dataIndex: 'reason' },
+        { title: t('common.status'), dataIndex: 'status', render: (v) => <Tag color={APPROVAL_COLOR[v as keyof typeof APPROVAL_COLOR]}>{approvalLabel[v as keyof typeof approvalLabel]}</Tag> },
+        { title: t('myApplications.approveComment'), dataIndex: 'approveComment' },
         {
-          title: '操作',
+          title: t('common.actions'),
           render: (_, record) =>
             record.status === 'PENDING' ? (
-              <Popconfirm title="确认撤销该申请？" onConfirm={() => cancelMutation.mutate(record.id)}>
+              <Popconfirm title={t('common.confirmRevoke')} onConfirm={() => cancelMutation.mutate(record.id)}>
                 <Button size="small" danger>
-                  撤销
+                  {t('common.revoke')}
                 </Button>
               </Popconfirm>
             ) : null,
@@ -45,12 +48,14 @@ function LeaveTab() {
 }
 
 function OvertimeTab() {
+  const { t } = useTranslation();
+  const approvalLabel = useApprovalLabel();
   const queryClient = useQueryClient();
   const { data = [] } = useQuery({ queryKey: ['my-overtime'], queryFn: overtimeApi.mine });
   const cancelMutation = useMutation({
     mutationFn: overtimeApi.cancel,
     onSuccess: () => {
-      message.success('已撤销');
+      message.success(t('myApplications.revoked'));
       queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
     },
   });
@@ -62,18 +67,18 @@ function OvertimeTab() {
       dataSource={data}
       pagination={{ pageSize: 10 }}
       columns={[
-        { title: '日期', dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },
-        { title: '时长(小时)', dataIndex: 'hours' },
-        { title: '事由', dataIndex: 'reason' },
-        { title: '状态', dataIndex: 'status', render: (v) => <Tag color={APPROVAL_COLOR[v as keyof typeof APPROVAL_COLOR]}>{APPROVAL_LABEL[v as keyof typeof APPROVAL_LABEL]}</Tag> },
-        { title: '审批意见', dataIndex: 'approveComment' },
+        { title: t('common.date'), dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },
+        { title: t('myApplications.hours'), dataIndex: 'hours' },
+        { title: t('common.reason'), dataIndex: 'reason' },
+        { title: t('common.status'), dataIndex: 'status', render: (v) => <Tag color={APPROVAL_COLOR[v as keyof typeof APPROVAL_COLOR]}>{approvalLabel[v as keyof typeof approvalLabel]}</Tag> },
+        { title: t('myApplications.approveComment'), dataIndex: 'approveComment' },
         {
-          title: '操作',
+          title: t('common.actions'),
           render: (_, record) =>
             record.status === 'PENDING' ? (
-              <Popconfirm title="确认撤销该申请？" onConfirm={() => cancelMutation.mutate(record.id)}>
+              <Popconfirm title={t('common.confirmRevoke')} onConfirm={() => cancelMutation.mutate(record.id)}>
                 <Button size="small" danger>
-                  撤销
+                  {t('common.revoke')}
                 </Button>
               </Popconfirm>
             ) : null,
@@ -84,14 +89,15 @@ function OvertimeTab() {
 }
 
 export default function MyApplications() {
+  const { t } = useTranslation();
   return (
     <div>
-      <Typography.Title level={3}>我的申请记录</Typography.Title>
+      <Typography.Title level={3}>{t('myApplications.title')}</Typography.Title>
       <Card>
         <Tabs
           items={[
-            { key: 'leave', label: '请假申请', children: <LeaveTab /> },
-            { key: 'overtime', label: '加班申请', children: <OvertimeTab /> },
+            { key: 'leave', label: t('myApplications.leaveTab'), children: <LeaveTab /> },
+            { key: 'overtime', label: t('myApplications.overtimeTab'), children: <OvertimeTab /> },
           ]}
         />
       </Card>

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Button, Card, Form, Input, Modal, Select, Table, Tabs, Tree, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { departmentsApi, teamsApi, officesApi } from '../../api/org';
-import { MODE_LABEL } from '../../utils/status';
+import { useModeLabel } from '../../utils/status';
 import type { AttendanceMode, Department } from '../../api/types';
 
 function toTreeData(depts: Department[]): any[] {
@@ -10,6 +11,7 @@ function toTreeData(depts: Department[]): any[] {
 }
 
 function DepartmentsTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: tree = [] } = useQuery({ queryKey: ['dept-tree'], queryFn: departmentsApi.tree });
   const { data: departments = [] } = useQuery({ queryKey: ['departments'], queryFn: departmentsApi.list });
@@ -19,7 +21,7 @@ function DepartmentsTab() {
   const createMutation = useMutation({
     mutationFn: departmentsApi.create,
     onSuccess: () => {
-      message.success('创建成功');
+      message.success(t('common.createSuccess'));
       setModalOpen(false);
       form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['dept-tree'] });
@@ -30,15 +32,15 @@ function DepartmentsTab() {
   return (
     <div>
       <Button type="primary" style={{ marginBottom: 16 }} onClick={() => setModalOpen(true)}>
-        新增部门
+        {t('adminTeams.addDepartment')}
       </Button>
       <Tree treeData={toTreeData(tree)} defaultExpandAll />
-      <Modal title="新增部门" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
+      <Modal title={t('adminTeams.addDepartmentTitle')} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
         <Form layout="vertical" form={form} onFinish={(v) => createMutation.mutate(v)}>
-          <Form.Item name="name" label="部门名称" rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('adminTeams.departmentName')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="parentId" label="上级部门">
+          <Form.Item name="parentId" label={t('adminTeams.parentDepartment')}>
             <Select allowClear options={departments.map((d) => ({ value: d.id, label: d.name }))} />
           </Form.Item>
         </Form>
@@ -48,6 +50,8 @@ function DepartmentsTab() {
 }
 
 function TeamsTab() {
+  const { t } = useTranslation();
+  const modeLabel = useModeLabel();
   const queryClient = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const { data: departments = [] } = useQuery({ queryKey: ['departments'], queryFn: departmentsApi.list });
@@ -57,7 +61,7 @@ function TeamsTab() {
   const createMutation = useMutation({
     mutationFn: teamsApi.create,
     onSuccess: () => {
-      message.success('创建成功');
+      message.success(t('common.createSuccess'));
       setModalOpen(false);
       form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['teams'] });
@@ -67,7 +71,7 @@ function TeamsTab() {
   const modeMutation = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: AttendanceMode }) => teamsApi.setModeConfig(id, mode),
     onSuccess: () => {
-      message.success('打卡模式已更新');
+      message.success(t('adminTeams.modeUpdated'));
       queryClient.invalidateQueries({ queryKey: ['teams'] });
     },
   });
@@ -75,35 +79,35 @@ function TeamsTab() {
   return (
     <div>
       <Button type="primary" style={{ marginBottom: 16 }} onClick={() => setModalOpen(true)}>
-        新增团队
+        {t('adminTeams.addTeam')}
       </Button>
       <Table
         rowKey="id"
         scroll={{ x: "max-content" }}
         dataSource={teams}
         columns={[
-          { title: '团队名称', dataIndex: 'name' },
-          { title: '所属部门', dataIndex: ['department', 'name'] },
+          { title: t('adminTeams.teamName'), dataIndex: 'name' },
+          { title: t('adminTeams.belongingDepartment'), dataIndex: ['department', 'name'] },
           {
-            title: '打卡模式（第3.2节，可随时调整）',
+            title: t('adminTeams.modeColumn'),
             render: (_, r: any) => (
               <Select
                 style={{ width: 160 }}
                 value={r.modeConfig?.mode}
-                placeholder="未设置"
+                placeholder={t('adminTeams.modeNotSet')}
                 onChange={(mode) => modeMutation.mutate({ id: r.id, mode })}
-                options={Object.entries(MODE_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+                options={Object.entries(modeLabel).map(([k, v]) => ({ value: k, label: v }))}
               />
             ),
           },
         ]}
       />
-      <Modal title="新增团队" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
+      <Modal title={t('adminTeams.addTeamTitle')} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
         <Form layout="vertical" form={form} onFinish={(v) => createMutation.mutate(v)}>
-          <Form.Item name="name" label="团队名称" rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('adminTeams.teamName')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="departmentId" label="所属部门" rules={[{ required: true }]}>
+          <Form.Item name="departmentId" label={t('adminTeams.belongingDepartment')} rules={[{ required: true }]}>
             <Select options={departments.map((d) => ({ value: d.id, label: d.name }))} />
           </Form.Item>
         </Form>
@@ -113,6 +117,7 @@ function TeamsTab() {
 }
 
 function OfficesTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: offices = [] } = useQuery({ queryKey: ['offices'], queryFn: officesApi.list });
   const [modalOpen, setModalOpen] = useState(false);
@@ -121,7 +126,7 @@ function OfficesTab() {
   const createMutation = useMutation({
     mutationFn: officesApi.create,
     onSuccess: () => {
-      message.success('创建成功');
+      message.success(t('common.createSuccess'));
       setModalOpen(false);
       form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['offices'] });
@@ -131,31 +136,31 @@ function OfficesTab() {
   return (
     <div>
       <Button type="primary" style={{ marginBottom: 16 }} onClick={() => setModalOpen(true)}>
-        新增办公室
+        {t('adminTeams.addOffice')}
       </Button>
       <Table
         rowKey="id"
         scroll={{ x: "max-content" }}
         dataSource={offices}
         columns={[
-          { title: '名称', dataIndex: 'name' },
-          { title: '地址', dataIndex: 'address' },
-          { title: '纬度', dataIndex: 'gpsLat' },
-          { title: '经度', dataIndex: 'gpsLng' },
+          { title: t('adminTeams.officeName'), dataIndex: 'name' },
+          { title: t('adminTeams.address'), dataIndex: 'address' },
+          { title: t('adminTeams.lat'), dataIndex: 'gpsLat' },
+          { title: t('adminTeams.lng'), dataIndex: 'gpsLng' },
         ]}
       />
-      <Modal title="新增办公室" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
+      <Modal title={t('adminTeams.addOfficeTitle')} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
         <Form layout="vertical" form={form} onFinish={(v) => createMutation.mutate(v)}>
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('adminTeams.officeName')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="address" label="地址">
+          <Form.Item name="address" label={t('adminTeams.address')}>
             <Input />
           </Form.Item>
-          <Form.Item name="gpsLat" label="纬度">
+          <Form.Item name="gpsLat" label={t('adminTeams.lat')}>
             <Input type="number" />
           </Form.Item>
-          <Form.Item name="gpsLng" label="经度">
+          <Form.Item name="gpsLng" label={t('adminTeams.lng')}>
             <Input type="number" />
           </Form.Item>
         </Form>
@@ -165,15 +170,16 @@ function OfficesTab() {
 }
 
 export default function Teams() {
+  const { t } = useTranslation();
   return (
     <div>
-      <Typography.Title level={3}>部门/团队管理</Typography.Title>
+      <Typography.Title level={3}>{t('adminTeams.title')}</Typography.Title>
       <Card>
         <Tabs
           items={[
-            { key: 'departments', label: '部门树', children: <DepartmentsTab /> },
-            { key: 'teams', label: '团队 + 打卡模式映射', children: <TeamsTab /> },
-            { key: 'offices', label: '办公室', children: <OfficesTab /> },
+            { key: 'departments', label: t('adminTeams.departmentsTab'), children: <DepartmentsTab /> },
+            { key: 'teams', label: t('adminTeams.teamsTab'), children: <TeamsTab /> },
+            { key: 'offices', label: t('adminTeams.officesTab'), children: <OfficesTab /> },
           ]}
         />
       </Card>

@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, Upload, message } from 'antd';
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { usersApi, departmentsApi, teamsApi } from '../../api/org';
-import { ROLE_LABEL } from '../../utils/status';
+import { useRoleLabel } from '../../utils/status';
 import type { Role } from '../../api/types';
 
 export default function Employees() {
+  const { t } = useTranslation();
+  const roleLabel = useRoleLabel();
   const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -19,18 +22,18 @@ export default function Employees() {
   const createMutation = useMutation({
     mutationFn: usersApi.create,
     onSuccess: () => {
-      message.success('创建成功');
+      message.success(t('common.createSuccess'));
       setModalOpen(false);
       form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
-    onError: (e: any) => message.error(e?.response?.data?.message ?? '创建失败'),
+    onError: (e: any) => message.error(e?.response?.data?.message ?? t('common.createFailed')),
   });
 
   const toggleActiveMutation = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => (active ? usersApi.enable(id) : usersApi.disable(id)),
     onSuccess: () => {
-      message.success('操作成功');
+      message.success(t('common.opSuccess'));
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
   });
@@ -38,20 +41,20 @@ export default function Employees() {
   const importMutation = useMutation({
     mutationFn: usersApi.importExcel,
     onSuccess: (res: any) => {
-      message.success(`导入完成：成功 ${res.success}/${res.total}`);
+      message.success(t('adminEmployees.importDone', { success: res.success, total: res.total }));
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
-    onError: (e: any) => message.error(e?.response?.data?.message ?? '导入失败'),
+    onError: (e: any) => message.error(e?.response?.data?.message ?? t('adminEmployees.importFailed')),
   });
 
   return (
     <div>
-      <Typography.Title level={3}>员工管理</Typography.Title>
+      <Typography.Title level={3}>{t('adminEmployees.title')}</Typography.Title>
       <Card>
         <Space wrap style={{ marginBottom: 16 }}>
-          <Input.Search placeholder="搜索姓名/工号/邮箱" onSearch={setKeyword} style={{ width: 240 }} allowClear />
+          <Input.Search placeholder={t('adminEmployees.searchPlaceholder')} onSearch={setKeyword} style={{ width: 240 }} allowClear />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-            新增员工
+            {t('adminEmployees.addEmployee')}
           </Button>
           <Upload
             showUploadList={false}
@@ -59,7 +62,7 @@ export default function Employees() {
             customRequest={({ file }) => importMutation.mutate(file as File)}
           >
             <Button icon={<UploadOutlined />} loading={importMutation.isPending}>
-              批量导入（Excel）
+              {t('adminEmployees.importExcel')}
             </Button>
           </Upload>
         </Space>
@@ -69,47 +72,47 @@ export default function Employees() {
           loading={isLoading}
           dataSource={users}
           columns={[
-            { title: '工号', dataIndex: 'employeeNo' },
-            { title: '姓名', dataIndex: 'name' },
-            { title: '邮箱', dataIndex: 'email' },
-            { title: '角色', dataIndex: 'role', render: (v: Role) => ROLE_LABEL[v] },
-            { title: '部门', render: (_, r: any) => r.department?.name },
-            { title: '团队', render: (_, r: any) => r.team?.name },
-            { title: '状态', dataIndex: 'isActive', render: (v) => (v ? <Tag color="green">启用</Tag> : <Tag color="red">禁用</Tag>) },
+            { title: t('adminEmployees.employeeNo'), dataIndex: 'employeeNo' },
+            { title: t('adminEmployees.name'), dataIndex: 'name' },
+            { title: t('adminEmployees.email'), dataIndex: 'email' },
+            { title: t('adminEmployees.role'), dataIndex: 'role', render: (v: Role) => roleLabel[v] },
+            { title: t('adminEmployees.department'), render: (_, r: any) => r.department?.name },
+            { title: t('adminEmployees.team'), render: (_, r: any) => r.team?.name },
+            { title: t('adminEmployees.status'), dataIndex: 'isActive', render: (v) => (v ? <Tag color="green">{t('common.enabled')}</Tag> : <Tag color="red">{t('common.disabled')}</Tag>) },
             {
-              title: '操作',
+              title: t('common.actions'),
               render: (_, r: any) => (
-                <Switch checked={r.isActive} onChange={(checked) => toggleActiveMutation.mutate({ id: r.id, active: checked })} checkedChildren="启用" unCheckedChildren="禁用" />
+                <Switch checked={r.isActive} onChange={(checked) => toggleActiveMutation.mutate({ id: r.id, active: checked })} checkedChildren={t('common.enable')} unCheckedChildren={t('common.disable')} />
               ),
             },
           ]}
         />
       </Card>
 
-      <Modal title="新增员工" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
+      <Modal title={t('adminEmployees.addEmployeeTitle')} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
         <Form layout="vertical" form={form} onFinish={(v) => createMutation.mutate(v)}>
-          <Form.Item name="employeeNo" label="工号" rules={[{ required: true }]}>
+          <Form.Item name="employeeNo" label={t('adminEmployees.employeeNo')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="name" label="姓名" rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('adminEmployees.name')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="email" label="邮箱" rules={[{ required: true, type: 'email' }]}>
+          <Form.Item name="email" label={t('adminEmployees.email')} rules={[{ required: true, type: 'email' }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 6 }]}>
+          <Form.Item name="password" label={t('adminEmployees.initialPassword')} rules={[{ required: true, min: 6 }]}>
             <Input.Password />
           </Form.Item>
-          <Form.Item name="role" label="角色" initialValue="EMPLOYEE">
-            <Select options={Object.entries(ROLE_LABEL).map(([k, v]) => ({ value: k, label: v }))} />
+          <Form.Item name="role" label={t('adminEmployees.role')} initialValue="EMPLOYEE">
+            <Select options={Object.entries(roleLabel).map(([k, v]) => ({ value: k, label: v }))} />
           </Form.Item>
-          <Form.Item name="departmentId" label="部门">
+          <Form.Item name="departmentId" label={t('adminEmployees.department')}>
             <Select allowClear options={departments.map((d) => ({ value: d.id, label: d.name }))} />
           </Form.Item>
-          <Form.Item name="teamId" label="团队">
-            <Select allowClear options={teams.map((t) => ({ value: t.id, label: t.name }))} />
+          <Form.Item name="teamId" label={t('adminEmployees.team')}>
+            <Select allowClear options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
           </Form.Item>
-          <Form.Item name="position" label="职位">
+          <Form.Item name="position" label={t('adminEmployees.position')}>
             <Input />
           </Form.Item>
         </Form>

@@ -1,14 +1,17 @@
 import { Card, Col, Row, Statistic, Typography, Tag } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { useAuthStore } from '../store/authStore';
 import { attendanceApi } from '../api/attendance';
-import { STATUS_LABEL, STATUS_COLOR } from '../utils/status';
+import { STATUS_COLOR, useStatusLabel } from '../utils/status';
 
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
   const isHq = user?.role === 'HQ';
+  const { t } = useTranslation();
+  const statusLabel = useStatusLabel();
 
   const { data: today } = useQuery({
     queryKey: ['attendance-today'],
@@ -18,33 +21,33 @@ export default function Dashboard() {
 
   return (
     <div>
-      <Typography.Title level={3}>欢迎，{user?.name}</Typography.Title>
+      <Typography.Title level={3}>{t('dashboard.welcome', { name: user?.name })}</Typography.Title>
       <Row gutter={[16, 16]}>
         {!isHq && (
           <Col xs={24} sm={12} md={8}>
             <Card>
-              <Statistic title="今日日期" value={dayjs().format('YYYY-MM-DD dddd')} />
+              <Statistic title={t('dashboard.todayDate')} value={dayjs().format('YYYY-MM-DD dddd')} />
               <div style={{ marginTop: 12 }}>
-                今日状态：
+                {t('dashboard.todayStatus')}：
                 {today?.record ? (
-                  <Tag color={STATUS_COLOR[today.record.status]}>{STATUS_LABEL[today.record.status]}</Tag>
+                  <Tag color={STATUS_COLOR[today.record.status]}>{statusLabel[today.record.status]}</Tag>
                 ) : (
-                  <Tag>未打卡</Tag>
+                  <Tag>{t('dashboard.noRecord')}</Tag>
                 )}
               </div>
-              <Link to="/clock-in">去打卡 →</Link>
+              <Link to="/clock-in">{t('dashboard.goClockIn')}</Link>
             </Card>
           </Col>
         )}
         <Col xs={24} sm={12} md={8}>
-          <Card title="快捷入口">
+          <Card title={t('dashboard.quickLinks')}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {!isHq && <Link to="/my-attendance">查看我的考勤日历</Link>}
-              {!isHq && <Link to="/leave/apply">提交请假/加班申请</Link>}
+              {!isHq && <Link to="/my-attendance">{t('dashboard.myCalendar')}</Link>}
+              {!isHq && <Link to="/leave/apply">{t('dashboard.applyLeave')}</Link>}
               {(user?.role === 'LOCAL_MANAGER' || user?.role === 'LOCAL_HR') && (
-                <Link to="/reports/region">查看本地区报表</Link>
+                <Link to="/reports/region">{t('dashboard.regionReport')}</Link>
               )}
-              {(user?.role === 'HQ' || user?.role === 'LOCAL_HR') && <Link to="/reports/global">查看全局报表</Link>}
+              {(user?.role === 'HQ' || user?.role === 'LOCAL_HR') && <Link to="/reports/global">{t('dashboard.globalReport')}</Link>}
             </div>
           </Card>
         </Col>

@@ -1,8 +1,10 @@
 import { Button, Card, DatePicker, Form, Input, InputNumber, Select, Tabs, Typography, message } from 'antd';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { leaveApi, overtimeApi } from '../../api/leaveOvertime';
 
 export default function LeaveApply() {
+  const { t } = useTranslation();
   const { data: leaveTypes = [] } = useQuery({ queryKey: ['leave-types'], queryFn: () => leaveApi.types(true) });
 
   const leaveMutation = useMutation({
@@ -13,59 +15,59 @@ export default function LeaveApply() {
         endTime: values.range[1].toISOString(),
         reason: values.reason,
       }),
-    onSuccess: () => message.success('请假申请已提交'),
-    onError: (e: any) => message.error(e?.response?.data?.message ?? '提交失败'),
+    onSuccess: () => message.success(t('leaveApply.leaveSubmitted')),
+    onError: (e: any) => message.error(e?.response?.data?.message ?? t('common.submitFailed')),
   });
 
   const overtimeMutation = useMutation({
     mutationFn: (values: any) =>
       overtimeApi.apply({ date: values.date.format('YYYY-MM-DD'), hours: values.hours, reason: values.reason }),
-    onSuccess: () => message.success('加班申请已提交'),
-    onError: (e: any) => message.error(e?.response?.data?.message ?? '提交失败'),
+    onSuccess: () => message.success(t('leaveApply.overtimeSubmitted')),
+    onError: (e: any) => message.error(e?.response?.data?.message ?? t('common.submitFailed')),
   });
 
   return (
     <div style={{ maxWidth: 560 }}>
-      <Typography.Title level={3}>请假/加班申请</Typography.Title>
+      <Typography.Title level={3}>{t('leaveApply.title')}</Typography.Title>
       <Card>
         <Tabs
           items={[
             {
               key: 'leave',
-              label: '请假申请',
+              label: t('leaveApply.leaveTab'),
               children: (
                 <Form layout="vertical" onFinish={(v) => leaveMutation.mutate(v)}>
-                  <Form.Item name="typeId" label="请假类型" rules={[{ required: true }]}>
-                    <Select options={leaveTypes.map((t) => ({ label: t.name, value: t.id }))} placeholder="请选择请假类型" />
+                  <Form.Item name="typeId" label={t('leaveApply.leaveType')} rules={[{ required: true }]}>
+                    <Select options={leaveTypes.map((lt) => ({ label: lt.name, value: lt.id }))} placeholder={t('leaveApply.leaveTypePlaceholder')} />
                   </Form.Item>
-                  <Form.Item name="range" label="请假时间段" rules={[{ required: true }]}>
+                  <Form.Item name="range" label={t('leaveApply.leavePeriod')} rules={[{ required: true }]}>
                     <DatePicker.RangePicker showTime style={{ width: '100%' }} />
                   </Form.Item>
-                  <Form.Item name="reason" label="事由说明" rules={[{ required: true }]}>
+                  <Form.Item name="reason" label={t('leaveApply.reason')} rules={[{ required: true }]}>
                     <Input.TextArea rows={3} />
                   </Form.Item>
                   <Button type="primary" htmlType="submit" loading={leaveMutation.isPending}>
-                    提交请假申请
+                    {t('leaveApply.submitLeave')}
                   </Button>
                 </Form>
               ),
             },
             {
               key: 'overtime',
-              label: '加班申请',
+              label: t('leaveApply.overtimeTab'),
               children: (
                 <Form layout="vertical" onFinish={(v) => overtimeMutation.mutate(v)}>
-                  <Form.Item name="date" label="加班日期" rules={[{ required: true }]}>
+                  <Form.Item name="date" label={t('leaveApply.overtimeDate')} rules={[{ required: true }]}>
                     <DatePicker style={{ width: '100%' }} />
                   </Form.Item>
-                  <Form.Item name="hours" label="加班时长（小时）" rules={[{ required: true }]}>
+                  <Form.Item name="hours" label={t('leaveApply.overtimeHours')} rules={[{ required: true }]}>
                     <InputNumber min={0.5} step={0.5} style={{ width: '100%' }} />
                   </Form.Item>
-                  <Form.Item name="reason" label="事由说明" rules={[{ required: true }]}>
+                  <Form.Item name="reason" label={t('leaveApply.reason')} rules={[{ required: true }]}>
                     <Input.TextArea rows={3} />
                   </Form.Item>
                   <Button type="primary" htmlType="submit" loading={overtimeMutation.isPending}>
-                    提交加班申请
+                    {t('leaveApply.submitOvertime')}
                   </Button>
                 </Form>
               ),

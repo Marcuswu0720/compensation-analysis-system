@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button, Card, DatePicker, Form, Input, Modal, Select, Space, Table, Tabs, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { schedulesApi } from '../api/schedules';
 import { teamsApi, usersApi } from '../api/org';
@@ -8,6 +9,7 @@ import { useAuthStore } from '../store/authStore';
 import type { ScheduleAssignment } from '../api/types';
 
 function AssignmentsTab() {
+  const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
   const isHr = user?.role === 'LOCAL_HR';
   const queryClient = useQueryClient();
@@ -30,19 +32,19 @@ function AssignmentsTab() {
   const changeMutation = useMutation({
     mutationFn: () => schedulesApi.changeAssignment(changeTarget!.id, newShiftId!),
     onSuccess: () => {
-      message.success('排班已调整，变更记录已留痕');
+      message.success(t('schedule.changeSuccess'));
       setChangeTarget(null);
       setNewShiftId(undefined);
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
     },
-    onError: (e: any) => message.error(e?.response?.data?.message ?? '调整失败'),
+    onError: (e: any) => message.error(e?.response?.data?.message ?? t('schedule.changeFailed')),
   });
 
   return (
     <div>
       <Space wrap style={{ marginBottom: 16 }}>
         {(isHr || user?.role === 'LOCAL_MANAGER') && (
-          <Select style={{ width: 200 }} placeholder="选择团队" allowClear value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
+          <Select style={{ width: 200 }} placeholder={t('common.selectTeam')} allowClear value={teamId} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
         )}
         <DatePicker.RangePicker value={range} onChange={(v) => v && setRange(v as [dayjs.Dayjs, dayjs.Dayjs])} />
       </Space>
@@ -51,17 +53,17 @@ function AssignmentsTab() {
         scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
-          { title: '员工', render: (_, r) => `${r.user.name}(${r.user.employeeNo})` },
-          { title: '日期', dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },
-          { title: '班次', render: (_, r) => `${r.shift.name} ${r.shift.startTime}-${r.shift.endTime}` },
-          { title: '是否临时调整', dataIndex: 'isTemporary', render: (v) => (v ? '是' : '否') },
+          { title: t('common.employee'), render: (_, r) => `${r.user.name}(${r.user.employeeNo})` },
+          { title: t('common.date'), dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },
+          { title: t('schedule.shift'), render: (_, r) => `${r.shift.name} ${r.shift.startTime}-${r.shift.endTime}` },
+          { title: t('schedule.isTemporary'), dataIndex: 'isTemporary', render: (v) => (v ? t('common.yes') : t('common.no')) },
           ...(isHr
             ? [
                 {
-                  title: '操作',
+                  title: t('common.actions'),
                   render: (_: unknown, r: ScheduleAssignment) => (
                     <Button size="small" onClick={() => setChangeTarget(r)}>
-                      调整班次
+                      {t('schedule.changeShift')}
                     </Button>
                   ),
                 },
@@ -70,7 +72,7 @@ function AssignmentsTab() {
         ]}
       />
       <Modal
-        title={changeTarget ? `调整 ${changeTarget.user.name} ${dayjs(changeTarget.date).format('YYYY-MM-DD')} 的班次` : ''}
+        title={changeTarget ? t('schedule.changeShiftTitle', { name: changeTarget.user.name, date: dayjs(changeTarget.date).format('YYYY-MM-DD') }) : ''}
         open={!!changeTarget}
         onCancel={() => setChangeTarget(null)}
         onOk={() => changeMutation.mutate()}
@@ -79,7 +81,7 @@ function AssignmentsTab() {
       >
         <Select
           style={{ width: '100%' }}
-          placeholder="选择新班次"
+          placeholder={t('schedule.selectNewShift')}
           value={newShiftId}
           onChange={setNewShiftId}
           options={shiftOptions
@@ -92,6 +94,7 @@ function AssignmentsTab() {
 }
 
 function ShiftsTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const [teamId, setTeamId] = useState<string>();
@@ -100,14 +103,14 @@ function ShiftsTab() {
   const createMutation = useMutation({
     mutationFn: (values: any) => schedulesApi.createShift({ ...values, teamId }),
     onSuccess: () => {
-      message.success('创建成功');
+      message.success(t('schedule.createSuccess'));
       queryClient.invalidateQueries({ queryKey: ['shifts', teamId] });
     },
   });
 
   return (
     <div>
-      <Select style={{ width: 200, marginBottom: 16 }} placeholder="选择团队" value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
+      <Select style={{ width: 200, marginBottom: 16 }} placeholder={t('common.selectTeam')} value={teamId} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
       {teamId && (
         <>
           <Table
@@ -116,23 +119,23 @@ function ShiftsTab() {
             dataSource={shifts}
             style={{ marginBottom: 16 }}
             columns={[
-              { title: '班次名称', dataIndex: 'name' },
-              { title: '开始时间', dataIndex: 'startTime' },
-              { title: '结束时间', dataIndex: 'endTime' },
+              { title: t('schedule.shiftName'), dataIndex: 'name' },
+              { title: t('schedule.startTime'), dataIndex: 'startTime' },
+              { title: t('schedule.endTime'), dataIndex: 'endTime' },
             ]}
           />
           <Form layout="inline" onFinish={(v) => createMutation.mutate(v)}>
             <Form.Item name="name" rules={[{ required: true }]}>
-              <Input placeholder="班次名称，如早班" />
+              <Input placeholder={t('schedule.shiftNamePlaceholder')} />
             </Form.Item>
             <Form.Item name="startTime" rules={[{ required: true, pattern: /^([01]\d|2[0-3]):[0-5]\d$/, message: 'HH:mm' }]}>
-              <Input placeholder="开始 HH:mm" />
+              <Input placeholder={t('schedule.startTimePlaceholder')} />
             </Form.Item>
             <Form.Item name="endTime" rules={[{ required: true, pattern: /^([01]\d|2[0-3]):[0-5]\d$/, message: 'HH:mm' }]}>
-              <Input placeholder="结束 HH:mm" />
+              <Input placeholder={t('schedule.endTimePlaceholder')} />
             </Form.Item>
             <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
-              新增班次
+              {t('schedule.addShift')}
             </Button>
           </Form>
         </>
@@ -142,6 +145,7 @@ function ShiftsTab() {
 }
 
 function BatchGenerateTab() {
+  const { t } = useTranslation();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const [teamId, setTeamId] = useState<string>();
   const { data: shifts = [] } = useQuery({ queryKey: ['shifts', teamId], queryFn: () => schedulesApi.listShifts(teamId), enabled: !!teamId });
@@ -155,27 +159,27 @@ function BatchGenerateTab() {
         dateFrom: values.range[0].format('YYYY-MM-DD'),
         dateTo: values.range[1].format('YYYY-MM-DD'),
       }),
-    onSuccess: (res: any) => message.success(`生成完成：新增 ${res.createdCount} 条，跳过 ${res.skippedCount} 条（已有排班）`),
-    onError: (e: any) => message.error(e?.response?.data?.message ?? '生成失败'),
+    onSuccess: (res: any) => message.success(t('schedule.batchDone', { created: res.createdCount, skipped: res.skippedCount })),
+    onError: (e: any) => message.error(e?.response?.data?.message ?? t('schedule.batchFailed')),
   });
 
   return (
     <div style={{ maxWidth: 560 }}>
       <Form layout="vertical" onFinish={(v) => mutation.mutate(v)}>
-        <Form.Item label="团队" required>
-          <Select value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
+        <Form.Item label={t('schedule.batchTeam')} required>
+          <Select value={teamId} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
         </Form.Item>
-        <Form.Item name="shiftId" label="班次" rules={[{ required: true }]}>
+        <Form.Item name="shiftId" label={t('schedule.batchShift')} rules={[{ required: true }]}>
           <Select options={shifts.map((s) => ({ value: s.id, label: `${s.name} ${s.startTime}-${s.endTime}` }))} disabled={!teamId} />
         </Form.Item>
-        <Form.Item name="userIds" label="员工" rules={[{ required: true }]}>
+        <Form.Item name="userIds" label={t('schedule.batchEmployees')} rules={[{ required: true }]}>
           <Select mode="multiple" options={users.map((u) => ({ value: u.id, label: `${u.name}(${u.employeeNo})` }))} disabled={!teamId} />
         </Form.Item>
-        <Form.Item name="range" label="排班周期" rules={[{ required: true }]}>
+        <Form.Item name="range" label={t('schedule.batchPeriod')} rules={[{ required: true }]}>
           <DatePicker.RangePicker style={{ width: '100%' }} />
         </Form.Item>
         <Button type="primary" htmlType="submit" loading={mutation.isPending}>
-          批量生成排班
+          {t('schedule.batchGenerate')}
         </Button>
       </Form>
     </div>
@@ -183,20 +187,21 @@ function BatchGenerateTab() {
 }
 
 export default function Schedule() {
+  const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
   const isHr = user?.role === 'LOCAL_HR';
 
   return (
     <div>
-      <Typography.Title level={3}>排班表</Typography.Title>
+      <Typography.Title level={3}>{t('schedule.title')}</Typography.Title>
       <Card>
         <Tabs
           items={[
-            { key: 'assignments', label: '排班表查看', children: <AssignmentsTab /> },
+            { key: 'assignments', label: t('schedule.assignmentsTab'), children: <AssignmentsTab /> },
             ...(isHr
               ? [
-                  { key: 'shifts', label: '班次管理', children: <ShiftsTab /> },
-                  { key: 'batch', label: '批量生成排班', children: <BatchGenerateTab /> },
+                  { key: 'shifts', label: t('schedule.shiftsTab'), children: <ShiftsTab /> },
+                  { key: 'batch', label: t('schedule.batchTab'), children: <BatchGenerateTab /> },
                 ]
               : []),
           ]}

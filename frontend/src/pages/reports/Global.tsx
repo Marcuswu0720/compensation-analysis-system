@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Card, DatePicker, Table, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { reportsApi } from '../../api/reportsHolidays';
 
 export default function ReportsGlobal() {
+  const { t } = useTranslation();
   const [month, setMonth] = useState(dayjs());
   const { data = [] } = useQuery({
     queryKey: ['report-global', month.format('YYYY-MM')],
@@ -14,7 +16,7 @@ export default function ReportsGlobal() {
 
   return (
     <div>
-      <Typography.Title level={3}>全局报表（总部只读）</Typography.Title>
+      <Typography.Title level={3}>{t('reportsGlobal.title')}</Typography.Title>
       <Card>
         <DatePicker picker="month" value={month} onChange={(v) => v && setMonth(v)} style={{ marginBottom: 16 }} />
         <div style={{ width: '100%', height: 320, marginBottom: 24 }}>
@@ -25,9 +27,9 @@ export default function ReportsGlobal() {
               <YAxis />
               <Tooltip />
               <Legend />
-              <Bar dataKey="lateCount" name="迟到次数" fill="#faad14" />
-              <Bar dataKey="absentDays" name="缺勤天数" fill="#f5222d" />
-              <Bar dataKey="leaveDays" name="请假天数" fill="#1677ff" />
+              <Bar dataKey="lateCount" name={t('reportsGlobal.lateCount')} fill="#faad14" />
+              <Bar dataKey="absentDays" name={t('reportsGlobal.absentDays')} fill="#f5222d" />
+              <Bar dataKey="leaveDays" name={t('reportsGlobal.leaveDays')} fill="#1677ff" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -36,12 +38,12 @@ export default function ReportsGlobal() {
           scroll={{ x: "max-content" }}
           dataSource={data}
           columns={[
-            { title: '部门', dataIndex: 'department' },
-            { title: '人数', dataIndex: 'users' },
-            { title: '迟到次数', dataIndex: 'lateCount' },
-            { title: '缺勤天数', dataIndex: 'absentDays' },
-            { title: '请假天数', dataIndex: 'leaveDays' },
-            { title: '加班时长', dataIndex: 'overtimeHours' },
+            { title: t('reportsGlobal.department'), dataIndex: 'department' },
+            { title: t('reportsGlobal.users'), dataIndex: 'users' },
+            { title: t('reportsGlobal.lateCount'), dataIndex: 'lateCount' },
+            { title: t('reportsGlobal.absentDays'), dataIndex: 'absentDays' },
+            { title: t('reportsGlobal.leaveDays'), dataIndex: 'leaveDays' },
+            { title: t('reportsGlobal.overtimeHours'), dataIndex: 'overtimeHours' },
           ]}
         />
       </Card>
