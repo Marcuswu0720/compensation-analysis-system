@@ -40,7 +40,7 @@ function AssignmentsTab() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
+      <Space wrap style={{ marginBottom: 16 }}>
         {(isHr || user?.role === 'LOCAL_MANAGER') && (
           <Select style={{ width: 200 }} placeholder="选择团队" allowClear value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
         )}
@@ -48,6 +48,7 @@ function AssignmentsTab() {
       </Space>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
           { title: '员工', render: (_, r) => `${r.user.name}(${r.user.employeeNo})` },
@@ -111,6 +112,7 @@ function ShiftsTab() {
         <>
           <Table
             rowKey="id"
+            scroll={{ x: "max-content" }}
             dataSource={shifts}
             style={{ marginBottom: 16 }}
             columns={[

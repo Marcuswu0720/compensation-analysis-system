@@ -166,6 +166,7 @@ function LeaveTypesTab() {
       </Form>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
           { title: '代码', dataIndex: 'code' },
@@ -220,6 +221,7 @@ function HolidaysTab() {
       </Form>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
           { title: '日期', dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },

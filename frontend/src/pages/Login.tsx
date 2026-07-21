@@ -20,8 +20,8 @@ export default function Login() {
   });
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f0f2f5' }}>
-      <Card style={{ width: 380 }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f0f2f5', padding: 16 }}>
+      <Card style={{ width: '100%', maxWidth: 380 }}>
         <Typography.Title level={3} style={{ textAlign: 'center' }}>
           企业考勤管理系统
         </Typography.Title>

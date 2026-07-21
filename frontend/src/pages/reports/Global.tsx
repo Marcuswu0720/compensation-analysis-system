@@ -33,6 +33,7 @@ export default function ReportsGlobal() {
         </div>
         <Table
           rowKey="department"
+          scroll={{ x: "max-content" }}
           dataSource={data}
           columns={[
             { title: '部门', dataIndex: 'department' },

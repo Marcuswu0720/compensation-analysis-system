@@ -48,7 +48,7 @@ export default function Employees() {
     <div>
       <Typography.Title level={3}>员工管理</Typography.Title>
       <Card>
-        <Space style={{ marginBottom: 16 }}>
+        <Space wrap style={{ marginBottom: 16 }}>
           <Input.Search placeholder="搜索姓名/工号/邮箱" onSearch={setKeyword} style={{ width: 240 }} allowClear />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
             新增员工
@@ -65,6 +65,7 @@ export default function Employees() {
         </Space>
         <Table
           rowKey="id"
+          scroll={{ x: "max-content" }}
           loading={isLoading}
           dataSource={users}
           columns={[

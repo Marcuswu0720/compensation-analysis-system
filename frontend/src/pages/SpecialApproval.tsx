@@ -39,6 +39,7 @@ function LeaveSpecialTab() {
     <>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         locale={{ emptyText: '暂无待特批的请假申请' }}
         columns={[
@@ -87,6 +88,7 @@ function OvertimeSpecialTab() {
     <>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         locale={{ emptyText: '暂无待特批的加班申请' }}
         columns={[

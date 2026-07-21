@@ -79,6 +79,7 @@ function TeamsTab() {
       </Button>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={teams}
         columns={[
           { title: '团队名称', dataIndex: 'name' },
@@ -134,6 +135,7 @@ function OfficesTab() {
       </Button>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={offices}
         columns={[
           { title: '名称', dataIndex: 'name' },

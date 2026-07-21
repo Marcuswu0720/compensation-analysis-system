@@ -39,6 +39,7 @@ function LeaveApprovalTab() {
       <Select value={status} onChange={setStatus} style={{ width: 160, marginBottom: 12 }} options={Object.entries(APPROVAL_LABEL).map(([k, v]) => ({ value: k, label: v }))} />
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
           { title: '员工', render: (_, r: any) => `${r.user?.name}(${r.user?.employeeNo})` },
@@ -86,6 +87,7 @@ function OvertimeApprovalTab() {
       <Select value={status} onChange={setStatus} style={{ width: 160, marginBottom: 12 }} options={Object.entries(APPROVAL_LABEL).map(([k, v]) => ({ value: k, label: v }))} />
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
           { title: '员工', render: (_, r: any) => `${r.user?.name}(${r.user?.employeeNo})` },

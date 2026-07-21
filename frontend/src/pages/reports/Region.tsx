@@ -19,7 +19,7 @@ export default function ReportsRegion() {
     <div>
       <Typography.Title level={3}>本地区报表</Typography.Title>
       <Card>
-        <div style={{ marginBottom: 16, display: 'flex', gap: 12 }}>
+        <div style={{ marginBottom: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <DatePicker picker="month" value={month} onChange={(v) => v && setMonth(v)} />
           <Select style={{ width: 200 }} allowClear placeholder="按团队筛选" value={teamId} onChange={setTeamId} options={teams.map((t) => ({ value: t.id, label: t.name }))} />
           <a href={reportsApi.exportUrl({ teamId, month: month.format('YYYY-MM') })} target="_blank" rel="noreferrer">
@@ -28,6 +28,7 @@ export default function ReportsRegion() {
         </div>
         <Table
           rowKey="userId"
+          scroll={{ x: "max-content" }}
           dataSource={data}
           columns={[
             { title: '工号', dataIndex: 'employeeNo' },

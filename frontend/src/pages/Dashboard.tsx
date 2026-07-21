@@ -19,9 +19,9 @@ export default function Dashboard() {
   return (
     <div>
       <Typography.Title level={3}>欢迎，{user?.name}</Typography.Title>
-      <Row gutter={16}>
+      <Row gutter={[16, 16]}>
         {!isHq && (
-          <Col span={8}>
+          <Col xs={24} sm={12} md={8}>
             <Card>
               <Statistic title="今日日期" value={dayjs().format('YYYY-MM-DD dddd')} />
               <div style={{ marginTop: 12 }}>
@@ -36,7 +36,7 @@ export default function Dashboard() {
             </Card>
           </Col>
         )}
-        <Col span={8}>
+        <Col xs={24} sm={12} md={8}>
           <Card title="快捷入口">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {!isHq && <Link to="/my-attendance">查看我的考勤日历</Link>}

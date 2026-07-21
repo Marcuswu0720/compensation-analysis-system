@@ -28,6 +28,7 @@ function PendingTab() {
     <>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
           { title: '照片', dataIndex: 'photoUrl', render: (v) => <Image src={`${API_ORIGIN}${v}`} width={80} /> },
@@ -70,7 +71,7 @@ function TrajectoryTab() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
+      <Space wrap style={{ marginBottom: 16 }}>
         <Select
           style={{ width: 240 }}
           placeholder="选择员工"

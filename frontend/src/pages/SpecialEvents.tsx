@@ -38,10 +38,9 @@ export default function SpecialEvents() {
     <div>
       <Typography.Title level={3}>特殊事件标记（极端天气 / 突发事件）</Typography.Title>
       <Card title="新建标记" style={{ marginBottom: 16 }}>
-        <Form layout="inline" onFinish={(v) => createMutation.mutate(v)}>
-          <Form.Item name="type" rules={[{ required: true }]}>
+        <Form layout="vertical" onFinish={(v) => createMutation.mutate(v)} style={{ maxWidth: 480 }}>
+          <Form.Item name="type" label="事件类型" rules={[{ required: true }]}>
             <Select
-              style={{ width: 160 }}
               placeholder="事件类型"
               options={[
                 { value: 'EXTREME_WEATHER', label: '极端天气' },
@@ -49,13 +48,13 @@ export default function SpecialEvents() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="affectedOfficeIds" rules={[{ required: true }]}>
-            <Select mode="multiple" style={{ width: 240 }} placeholder="受影响办公室" options={offices.map((o) => ({ value: o.id, label: o.name }))} />
+          <Form.Item name="affectedOfficeIds" label="受影响办公室" rules={[{ required: true }]}>
+            <Select mode="multiple" placeholder="受影响办公室" options={offices.map((o) => ({ value: o.id, label: o.name }))} />
           </Form.Item>
-          <Form.Item name="range" rules={[{ required: true }]}>
-            <DatePicker.RangePicker showTime />
+          <Form.Item name="range" label="生效时间段" rules={[{ required: true }]}>
+            <DatePicker.RangePicker showTime style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="remark">
+          <Form.Item name="remark" label="备注">
             <Input placeholder="备注" />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
@@ -65,6 +64,7 @@ export default function SpecialEvents() {
       </Card>
       <Table
         rowKey="id"
+        scroll={{ x: "max-content" }}
         dataSource={events}
         columns={[
           { title: '类型', dataIndex: 'type', render: (v) => EVENT_TYPE_LABEL[v as keyof typeof EVENT_TYPE_LABEL] },

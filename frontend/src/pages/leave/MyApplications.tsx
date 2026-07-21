@@ -18,6 +18,7 @@ function LeaveTab() {
   return (
     <Table
       rowKey="id"
+      scroll={{ x: "max-content" }}
       dataSource={data}
       pagination={{ pageSize: 10 }}
       columns={[
@@ -57,6 +58,7 @@ function OvertimeTab() {
   return (
     <Table
       rowKey="id"
+      scroll={{ x: "max-content" }}
       dataSource={data}
       pagination={{ pageSize: 10 }}
       columns={[
