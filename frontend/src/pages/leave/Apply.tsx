@@ -2,9 +2,11 @@ import { Button, Card, DatePicker, Form, Input, InputNumber, Select, Tabs, Typog
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { leaveApi, overtimeApi } from '../../api/leaveOvertime';
+import { useLocalizedName } from '../../utils/status';
 
 export default function LeaveApply() {
   const { t } = useTranslation();
+  const localizedName = useLocalizedName();
   const { data: leaveTypes = [] } = useQuery({ queryKey: ['leave-types'], queryFn: () => leaveApi.types(true) });
 
   const leaveMutation = useMutation({
@@ -38,7 +40,7 @@ export default function LeaveApply() {
               children: (
                 <Form layout="vertical" onFinish={(v) => leaveMutation.mutate(v)}>
                   <Form.Item name="typeId" label={t('leaveApply.leaveType')} rules={[{ required: true }]}>
-                    <Select options={leaveTypes.map((lt) => ({ label: lt.name, value: lt.id }))} placeholder={t('leaveApply.leaveTypePlaceholder')} />
+                    <Select options={leaveTypes.map((lt) => ({ label: localizedName(lt), value: lt.id }))} placeholder={t('leaveApply.leaveTypePlaceholder')} />
                   </Form.Item>
                   <Form.Item name="range" label={t('leaveApply.leavePeriod')} rules={[{ required: true }]}>
                     <DatePicker.RangePicker showTime style={{ width: '100%' }} />

@@ -48,9 +48,9 @@ async function main() {
 
   await prisma.shift.createMany({
     data: [
-      { teamId: kaTeam.id, name: '早班', startTime: '08:00', endTime: '16:00' },
-      { teamId: kaTeam.id, name: '晚班', startTime: '14:00', endTime: '22:00' },
-      { teamId: creditReviewTeam.id, name: '早班', startTime: '09:00', endTime: '17:00' },
+      { teamId: kaTeam.id, name: '早班', nameEn: 'Morning shift', startTime: '08:00', endTime: '16:00' },
+      { teamId: kaTeam.id, name: '晚班', nameEn: 'Evening shift', startTime: '14:00', endTime: '22:00' },
+      { teamId: creditReviewTeam.id, name: '早班', nameEn: 'Morning shift', startTime: '09:00', endTime: '17:00' },
     ],
   });
 
@@ -90,11 +90,11 @@ async function main() {
   // --- 请假类型（10.3 可配置枚举） ---
   await prisma.leaveTypeConfig.createMany({
     data: [
-      { code: 'PERSONAL', name: '事假' },
-      { code: 'SICK', name: '病假' },
-      { code: 'ANNUAL', name: '年假' },
-      { code: 'MARRIAGE', name: '婚假' },
-      { code: 'MATERNITY', name: '产假' },
+      { code: 'PERSONAL', name: '事假', nameEn: 'Personal Leave' },
+      { code: 'SICK', name: '病假', nameEn: 'Sick Leave' },
+      { code: 'ANNUAL', name: '年假', nameEn: 'Annual Leave' },
+      { code: 'MARRIAGE', name: '婚假', nameEn: 'Marriage Leave' },
+      { code: 'MATERNITY', name: '产假', nameEn: 'Maternity Leave' },
     ],
   });
 

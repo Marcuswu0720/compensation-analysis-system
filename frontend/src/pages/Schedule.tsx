@@ -6,10 +6,12 @@ import dayjs from 'dayjs';
 import { schedulesApi } from '../api/schedules';
 import { teamsApi, usersApi } from '../api/org';
 import { useAuthStore } from '../store/authStore';
+import { useLocalizedName } from '../utils/status';
 import type { ScheduleAssignment } from '../api/types';
 
 function AssignmentsTab() {
   const { t } = useTranslation();
+  const localizedName = useLocalizedName();
   const user = useAuthStore((s) => s.user);
   const isHr = user?.role === 'LOCAL_HR';
   const queryClient = useQueryClient();
@@ -55,7 +57,7 @@ function AssignmentsTab() {
         columns={[
           { title: t('common.employee'), render: (_, r) => `${r.user.name}(${r.user.employeeNo})` },
           { title: t('common.date'), dataIndex: 'date', render: (v) => dayjs(v).format('YYYY-MM-DD') },
-          { title: t('schedule.shift'), render: (_, r) => `${r.shift.name} ${r.shift.startTime}-${r.shift.endTime}` },
+          { title: t('schedule.shift'), render: (_, r) => `${localizedName(r.shift)} ${r.shift.startTime}-${r.shift.endTime}` },
           { title: t('schedule.isTemporary'), dataIndex: 'isTemporary', render: (v) => (v ? t('common.yes') : t('common.no')) },
           ...(isHr
             ? [
@@ -86,7 +88,7 @@ function AssignmentsTab() {
           onChange={setNewShiftId}
           options={shiftOptions
             .filter((s) => s.id !== changeTarget?.shiftId)
-            .map((s) => ({ value: s.id, label: `${s.name} ${s.startTime}-${s.endTime}` }))}
+            .map((s) => ({ value: s.id, label: `${localizedName(s)} ${s.startTime}-${s.endTime}` }))}
         />
       </Modal>
     </div>
@@ -120,6 +122,7 @@ function ShiftsTab() {
             style={{ marginBottom: 16 }}
             columns={[
               { title: t('schedule.shiftName'), dataIndex: 'name' },
+              { title: t('schedule.shiftNameEn'), dataIndex: 'nameEn' },
               { title: t('schedule.startTime'), dataIndex: 'startTime' },
               { title: t('schedule.endTime'), dataIndex: 'endTime' },
             ]}
@@ -127,6 +130,9 @@ function ShiftsTab() {
           <Form layout="inline" onFinish={(v) => createMutation.mutate(v)}>
             <Form.Item name="name" rules={[{ required: true }]}>
               <Input placeholder={t('schedule.shiftNamePlaceholder')} />
+            </Form.Item>
+            <Form.Item name="nameEn">
+              <Input placeholder={t('schedule.shiftNameEnPlaceholder')} />
             </Form.Item>
             <Form.Item name="startTime" rules={[{ required: true, pattern: /^([01]\d|2[0-3]):[0-5]\d$/, message: 'HH:mm' }]}>
               <Input placeholder={t('schedule.startTimePlaceholder')} />
@@ -146,6 +152,7 @@ function ShiftsTab() {
 
 function BatchGenerateTab() {
   const { t } = useTranslation();
+  const localizedName = useLocalizedName();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const [teamId, setTeamId] = useState<string>();
   const { data: shifts = [] } = useQuery({ queryKey: ['shifts', teamId], queryFn: () => schedulesApi.listShifts(teamId), enabled: !!teamId });
@@ -170,7 +177,7 @@ function BatchGenerateTab() {
           <Select value={teamId} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
         </Form.Item>
         <Form.Item name="shiftId" label={t('schedule.batchShift')} rules={[{ required: true }]}>
-          <Select options={shifts.map((s) => ({ value: s.id, label: `${s.name} ${s.startTime}-${s.endTime}` }))} disabled={!teamId} />
+          <Select options={shifts.map((s) => ({ value: s.id, label: `${localizedName(s)} ${s.startTime}-${s.endTime}` }))} disabled={!teamId} />
         </Form.Item>
         <Form.Item name="userIds" label={t('schedule.batchEmployees')} rules={[{ required: true }]}>
           <Select mode="multiple" options={users.map((u) => ({ value: u.id, label: `${u.name}(${u.employeeNo})` }))} disabled={!teamId} />

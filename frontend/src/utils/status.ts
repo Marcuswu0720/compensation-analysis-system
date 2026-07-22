@@ -84,3 +84,12 @@ export function useRoleLabel(): Record<Role, string> {
     HQ: t('roles.HQ'),
   };
 }
+
+export function useLocalizedName(): (item: { name: string; nameEn?: string | null } | null | undefined) => string {
+  const { i18n } = useTranslation();
+  return (item) => {
+    if (!item) return '';
+    if (i18n.language === 'en' && item.nameEn) return item.nameEn;
+    return item.name;
+  };
+}

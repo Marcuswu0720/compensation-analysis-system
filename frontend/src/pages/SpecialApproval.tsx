@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { leaveApi, overtimeApi } from '../api/leaveOvertime';
+import { useLocalizedName } from '../utils/status';
 
 function useApprovalActions(queryKey: string[], approveFn: (id: string, c?: string) => Promise<unknown>, rejectFn: (id: string, c?: string) => Promise<unknown>) {
   const { t } = useTranslation();
@@ -31,6 +32,7 @@ function useApprovalActions(queryKey: string[], approveFn: (id: string, c?: stri
 
 function LeaveSpecialTab() {
   const { t } = useTranslation();
+  const localizedName = useLocalizedName();
   const { data = [] } = useQuery({ queryKey: ['leave-special-pending'], queryFn: leaveApi.specialPending });
   const { modal, setModal, comment, setComment, mutation } = useApprovalActions(
     ['leave-special-pending'],
@@ -47,7 +49,7 @@ function LeaveSpecialTab() {
         locale={{ emptyText: t('specialApproval.noLeavePending') }}
         columns={[
           { title: t('common.employee'), render: (_, r: any) => `${r.user?.name}(${r.user?.employeeNo})` },
-          { title: t('common.type'), dataIndex: ['type', 'name'] },
+          { title: t('common.type'), render: (_, r: any) => localizedName(r.type) },
           { title: t('common.startTime'), dataIndex: 'startTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
           { title: t('common.endTime'), dataIndex: 'endTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
           { title: t('common.reason'), dataIndex: 'reason' },

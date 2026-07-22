@@ -3,11 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { leaveApi, overtimeApi } from '../../api/leaveOvertime';
-import { APPROVAL_COLOR, useApprovalLabel } from '../../utils/status';
+import { APPROVAL_COLOR, useApprovalLabel, useLocalizedName } from '../../utils/status';
 
 function LeaveTab() {
   const { t } = useTranslation();
   const approvalLabel = useApprovalLabel();
+  const localizedName = useLocalizedName();
   const queryClient = useQueryClient();
   const { data = [] } = useQuery({ queryKey: ['my-leave'], queryFn: leaveApi.mine });
   const cancelMutation = useMutation({
@@ -25,7 +26,7 @@ function LeaveTab() {
       dataSource={data}
       pagination={{ pageSize: 10 }}
       columns={[
-        { title: t('common.type'), dataIndex: ['type', 'name'] },
+        { title: t('common.type'), render: (_, r: any) => localizedName(r.type) },
         { title: t('common.startTime'), dataIndex: 'startTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
         { title: t('common.endTime'), dataIndex: 'endTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
         { title: t('common.reason'), dataIndex: 'reason' },

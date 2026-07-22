@@ -252,6 +252,7 @@ model Shift {
   teamId    String
   team      Team     @relation(fields: [teamId], references: [id])
   name      String // 如"早班"、"晚班"
+  nameEn    String? // 英文名称，用于语言切换时显示
   startTime String // HH:mm
   endTime   String // HH:mm
   createdAt DateTime @default(now())
@@ -345,6 +346,7 @@ model LeaveTypeConfig {
   id       String  @id @default(uuid())
   code     String  @unique
   name     String
+  nameEn   String? // 英文名称，用于语言切换时显示
   isActive Boolean @default(true)
 
   leaveApplications LeaveApplication[]

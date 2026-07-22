@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import { leaveApi, overtimeApi } from '../api/leaveOvertime';
-import { APPROVAL_COLOR, useApprovalLabel } from '../utils/status';
+import { APPROVAL_COLOR, useApprovalLabel, useLocalizedName } from '../utils/status';
 import type { ApprovalStatus } from '../api/types';
 
 function useApprovalActions(queryKey: string[], approveFn: (id: string, c?: string) => Promise<unknown>, rejectFn: (id: string, c?: string) => Promise<unknown>) {
@@ -34,6 +34,7 @@ function useApprovalActions(queryKey: string[], approveFn: (id: string, c?: stri
 function LeaveApprovalTab() {
   const { t } = useTranslation();
   const approvalLabel = useApprovalLabel();
+  const localizedName = useLocalizedName();
   const [status, setStatus] = useState<ApprovalStatus>('PENDING');
   const { data = [] } = useQuery({ queryKey: ['leave-approvals', status], queryFn: () => leaveApi.list({ status }) });
   const { modal, setModal, comment, setComment, mutation } = useApprovalActions(['leave-approvals'], leaveApi.approve, leaveApi.reject);
@@ -47,7 +48,7 @@ function LeaveApprovalTab() {
         dataSource={data}
         columns={[
           { title: t('common.employee'), render: (_, r: any) => `${r.user?.name}(${r.user?.employeeNo})` },
-          { title: t('common.type'), dataIndex: ['type', 'name'] },
+          { title: t('common.type'), render: (_, r: any) => localizedName(r.type) },
           { title: t('common.startTime'), dataIndex: 'startTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
           { title: t('common.endTime'), dataIndex: 'endTime', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
           { title: t('common.reason'), dataIndex: 'reason' },

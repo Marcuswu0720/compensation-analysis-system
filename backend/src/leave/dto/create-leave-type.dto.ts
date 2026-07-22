@@ -1,4 +1,4 @@
-import { IsString } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
 export class CreateLeaveTypeDto {
   @IsString()
@@ -6,4 +6,8 @@ export class CreateLeaveTypeDto {
 
   @IsString()
   name: string;
+
+  @IsOptional()
+  @IsString()
+  nameEn?: string;
 }

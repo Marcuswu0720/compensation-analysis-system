@@ -162,6 +162,9 @@ function LeaveTypesTab() {
         <Form.Item name="name" rules={[{ required: true }]}>
           <Input placeholder={t('adminRules.typeNamePlaceholder')} />
         </Form.Item>
+        <Form.Item name="nameEn">
+          <Input placeholder={t('adminRules.typeNameEnPlaceholder')} />
+        </Form.Item>
         <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
           {t('adminRules.addLeaveType')}
         </Button>
@@ -173,6 +176,7 @@ function LeaveTypesTab() {
         columns={[
           { title: t('adminRules.typeCode'), dataIndex: 'code' },
           { title: t('adminRules.typeName'), dataIndex: 'name' },
+          { title: t('adminRules.typeNameEn'), dataIndex: 'nameEn' },
           {
             title: t('adminRules.active'),
             dataIndex: 'isActive',

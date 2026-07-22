@@ -107,6 +107,7 @@ export interface Shift {
   id: string;
   teamId: string;
   name: string;
+  nameEn: string | null;
   startTime: string;
   endTime: string;
 }
@@ -139,6 +140,7 @@ export interface LeaveType {
   id: string;
   code: string;
   name: string;
+  nameEn: string | null;
   isActive: boolean;
 }
 
