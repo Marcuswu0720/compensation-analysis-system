@@ -6,6 +6,7 @@ import dayjs from 'dayjs';
 import { locationCheckinApi } from '../api/locationCheckin';
 import { usersApi } from '../api/org';
 import { VERIFY_COLOR, useVerifyLabel } from '../utils/status';
+import { PHOTO_FALLBACK } from '../utils/imagePlaceholder';
 
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000/api').replace(/\/api\/?$/, '');
 
@@ -33,7 +34,7 @@ function PendingTab() {
         scroll={{ x: "max-content" }}
         dataSource={data}
         columns={[
-          { title: t('locationCheckinReview.photo'), dataIndex: 'photoUrl', render: (v) => <Image src={`${API_ORIGIN}${v}`} width={80} /> },
+          { title: t('locationCheckinReview.photo'), dataIndex: 'photoUrl', render: (v) => <Image src={`${API_ORIGIN}${v}`} width={80} fallback={PHOTO_FALLBACK} /> },
           { title: t('common.employee'), render: (_, r: any) => `${r.user?.name}(${r.user?.employeeNo})` },
           { title: t('common.team'), render: (_, r: any) => r.user?.team?.name },
           { title: t('locationCheckinReview.takenAt'), dataIndex: 'takenAt', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
@@ -90,7 +91,7 @@ function TrajectoryTab() {
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         {data.map((photo, idx) => (
           <Card key={photo.id} size="small" style={{ width: 180 }} title={`#${idx + 1} ${dayjs(photo.takenAt).format('HH:mm:ss')}`}>
-            <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={150} />
+            <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={150} fallback={PHOTO_FALLBACK} />
             <div style={{ marginTop: 8 }}>
               <Tag color={VERIFY_COLOR[photo.verifyStatus]}>{verifyLabel[photo.verifyStatus]}</Tag>
             </div>

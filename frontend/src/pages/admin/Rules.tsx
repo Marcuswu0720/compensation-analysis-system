@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, DatePicker, Form, Input, InputNumber, Popconfirm, Select, Switch, Table, Tabs, Typography, message } from 'antd';
+import { Alert, Button, Card, DatePicker, Form, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tabs, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
@@ -82,10 +82,26 @@ function RuleTemplateTab() {
     },
   });
 
+  const removeMutation = useMutation({
+    mutationFn: () => ruleTemplatesApi.remove(teamId!),
+    onSuccess: () => {
+      message.success(t('adminRules.resetSuccess'));
+      queryClient.invalidateQueries({ queryKey: ['rule-template', teamId] });
+    },
+  });
+
   return (
     <div style={{ maxWidth: 480 }}>
       <Typography.Paragraph type="secondary">{t('adminRules.templateDesc')}</Typography.Paragraph>
       <Select style={{ width: 240, marginBottom: 16 }} placeholder={t('adminRules.selectTeam')} value={teamId} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+      {teamId && (
+        <Alert
+          type={template ? 'warning' : 'info'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={template ? t('adminRules.templateOverrideActive') : t('adminRules.templateNoOverride')}
+        />
+      )}
       {teamId && (
         <Form layout="vertical" form={form} onFinish={(v) => mutation.mutate(v)}>
           <Form.Item name="requiresClockIn" label={t('adminRules.requiresClockIn')} valuePropName="checked">
@@ -124,9 +140,18 @@ function RuleTemplateTab() {
               ]}
             />
           </Form.Item>
-          <Button type="primary" htmlType="submit" loading={mutation.isPending}>
-            {t('common.save')}
-          </Button>
+          <Space>
+            <Button type="primary" htmlType="submit" loading={mutation.isPending}>
+              {t('common.save')}
+            </Button>
+            {template && (
+              <Popconfirm title={t('adminRules.resetConfirm')} onConfirm={() => removeMutation.mutate()}>
+                <Button danger loading={removeMutation.isPending}>
+                  {t('adminRules.resetToDefault')}
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
         </Form>
       )}
     </div>

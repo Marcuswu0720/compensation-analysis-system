@@ -7,6 +7,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { attendanceApi } from '../api/attendance';
 import { locationCheckinApi } from '../api/locationCheckin';
 import { STATUS_COLOR, VERIFY_COLOR, useStatusLabel, useModeLabel, useVerifyLabel } from '../utils/status';
+import { PHOTO_FALLBACK } from '../utils/imagePlaceholder';
 import { useAuthStore } from '../store/authStore';
 import { Tag } from 'antd';
 
@@ -172,7 +173,7 @@ export default function ClockIn() {
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               {myPhotos.map((photo, idx) => (
                 <Card key={photo.id} size="small" style={{ width: 160 }} title={`#${idx + 1} ${dayjs(photo.takenAt).format('HH:mm:ss')}`}>
-                  <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={136} />
+                  <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={136} fallback={PHOTO_FALLBACK} />
                   <div style={{ marginTop: 8 }}>
                     <Tag color={VERIFY_COLOR[photo.verifyStatus]}>{verifyLabel[photo.verifyStatus]}</Tag>
                   </div>
