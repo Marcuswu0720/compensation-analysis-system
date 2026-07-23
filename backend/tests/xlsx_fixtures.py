@@ -1,0 +1,105 @@
+"""Builds small synthetic payroll workbooks (no real employee data) that
+exercise the same edge cases the PRD documents from real files: sheet-name
+drift, field-alias drift, casing variants, summary rows, an exit-sheet that
+sometimes doesn't exist. Used only by tests/test_ingestion.py.
+"""
+
+import io
+
+import openpyxl
+
+
+def _sheet(wb, name, headers, rows):
+    ws = wb.create_sheet(name)
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
+    return ws
+
+
+def build_month1_workbook() -> bytes:
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    _sheet(
+        wb,
+        "Formal",
+        ["Staff ID", "Staff Name", "Entity", "Department 1", "Job Grade", "HR Cost", "Resign Date"],
+        [
+            ["E001", "Alice", "PalmPay", "Sales", "P1", 1000, None],
+            ["E002", "Bob", "PalmPay", "sales", "P2", 1200, None],
+            ["E003", "Carol", "PalmPay", "Ops", "P1", 900, "2026-01-20"],
+        ],
+    )
+    _sheet(
+        wb,
+        "Contract - PP",
+        ["Staff ID", "Staff Name", "Department 1", "Job Grade", "HR Cost", "Exit Date"],
+        [["E004", "Dave", "Sales", "C1", 500, "Active"]],
+    )
+    _sheet(
+        wb,
+        "Contract - Flexi",
+        ["Staff ID", "Staff Name", "Entity", "Department 1", "Job Grade", "HR Cost", "Exit Date"],
+        [["E005", "Eve", "Flexi", "Ops", "C1", 600, "Active"]],
+    )
+    _sheet(
+        wb,
+        "PP-Dec bonus",
+        ["Staff ID No", "Staff name", "Department 1", "Performance Bonus", "Commission", "Other", "Deduction", "HR Cost"],
+        [
+            ["E001", "Alice", "Sales", 100, 0, 0, 0, 100],
+            [None, "ITEM", "TOTAL", None, None, None, None, None],
+            [None, "Staff Number", 1, None, None, None, None, None],
+            [None, "Performance bonus", 100, None, None, None, None, None],
+            [None, "HR cost", 100, None, None, None, None, None],
+        ],
+    )
+    _sheet(
+        wb,
+        "1月离职",
+        [
+            "Staff Number",
+            "Staff Name",
+            "Entity",
+            "Department 1",
+            "New Reason for Leaving",
+            "Exit Type",
+            "Attrition",
+            "Exit Date \n(YYYY/MM/DD)",
+        ],
+        [["E003", "Carol", "PalmPay", "Ops", "Career change", "Resignation", "Voluntary", "2026-01-20"]],
+    )
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_month2_workbook() -> bytes:
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    _sheet(
+        wb,
+        "Formal",
+        ["Staff ID", "Staff Name", "Entity", "Department 1", "Job Grade", "HR Cost", "Resign Date"],
+        [
+            ["E001", "Alice", "PalmPay", "Sales", "P1", 1100, None],
+            ["E002", "Bob", "PalmPay", "Sales", "P2", 1200, None],
+            ["E006", "Frank", "PalmPay", "Sales", "P3", 700, None],
+        ],
+    )
+    # Field-alias drift: Entity column renamed to Company/签约主体 this month.
+    _sheet(
+        wb,
+        "PP-Contract",
+        ["Staff ID", "Staff Name", "Company/签约主体", "Department 1", "Job Grade", "HR Cost", "Exit Date"],
+        [["E004", "Dave", "PalmPay", "Sales", "C1", 550, "Active"]],
+    )
+    # E005 (Eve) is gone this month -> leaver. No Flexi sheet at all this month.
+    # No exits sheet this month either, mirroring the real Apr-Jun gap found in the real data.
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

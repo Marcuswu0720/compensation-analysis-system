@@ -1,0 +1,42 @@
+<title>登录 - 薪酬人力成本分析工具</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<div class="center-page">
+  <form class="card login-card" id="loginForm">
+    <h1>薪酬人力成本分析工具</h1>
+    <p>内部工具，登录后使用</p>
+    <label>用户名</label>
+    <input type="text" id="username" autocomplete="username" required>
+    <label>密码</label>
+    <input type="password" id="password" autocomplete="current-password" required>
+    <div class="error" id="loginError"></div>
+    <button type="submit" style="width:100%;margin-top:8px;">登录</button>
+  </form>
+</div>
+<script>
+fetch('/api/auth/me', { credentials: 'same-origin' }).then((r) => {
+  if (r.ok) window.location.href = '/dashboard';
+});
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      errEl.textContent = data.detail || '登录失败';
+      return;
+    }
+    window.location.href = '/dashboard';
+  } catch (err) {
+    errEl.textContent = '网络错误，请重试';
+  }
+});
+</script>
