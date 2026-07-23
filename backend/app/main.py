@@ -5,9 +5,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .database import Base, engine
+from .migrations import run_migrations
 from .routers import auth, chat, query, upload
 
 Base.metadata.create_all(bind=engine)
+run_migrations(engine)
 
 app = FastAPI(title="尼日利亚薪酬人力成本分析工具")
 

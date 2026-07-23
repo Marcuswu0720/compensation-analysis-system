@@ -5,19 +5,36 @@ generalized to any department/entity scope and backed by the DB. The
 three-way checksum against net change is preserved exactly: if it doesn't
 reconcile we raise instead of returning a number that might be wrong,
 per the PRD's "校验不吻合需要报错而不是硬给一个数字" principle.
+
+Standalone bonus/backpay uploads (salary_type != 'base', see
+ingestion/commit.py) fold into whichever staff_id they're tagged to before
+the joiner/leaver/stayer split runs, so a backpay payment shows up as part of
+that person's cost change rather than an unexplained gap. A supplemental
+entry whose staff_id isn't in the base roster for that month at all (person
+already gone, or base not uploaded yet) can't be attributed to anyone -
+those are tracked separately as `unattributed_delta` and still added into
+the checksum so it keeps reconciling against the real net change.
 """
 
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
-from ..models import ExitRecord, MonthlyEmployeeSnapshot
+from ..models import ExitRecord, MonthlyEmployeeSnapshot, SupplementalPaySnapshot
 
 
 @dataclass
 class EmployeeCost:
     staff_id: str
     name: str | None
+    job_grade: str | None
+    hr_cost: float
+
+
+@dataclass
+class _ScopedEmployee:
+    staff_id: str
+    staff_name: str | None
     job_grade: str | None
     hr_cost: float
 
@@ -39,6 +56,9 @@ class AttributionResult:
     stayers_prev_cost: float
     stayers_cur_cost: float
     stayers_delta: float
+    unattributed_prev: float
+    unattributed_cur: float
+    unattributed_delta: float
     checksum: float
     reconciled: bool
     top_increases: list[EmployeeCost] = field(default_factory=list)
@@ -46,7 +66,9 @@ class AttributionResult:
     leaver_reasons: dict[str, int] = field(default_factory=dict)
 
 
-def _fetch_scope(db: Session, month: str, department: str | None, entity: str | None) -> dict[str, MonthlyEmployeeSnapshot]:
+def _fetch_scope(
+    db: Session, month: str, department: str | None, entity: str | None
+) -> tuple[dict[str, _ScopedEmployee], float]:
     # Same "everyone with a payroll record that month" scope as get_trend - see
     # the comment there. A staff_id present in month M but absent in month M+1
     # is exactly what makes them a "leaver" for attribution purposes.
@@ -55,7 +77,24 @@ def _fetch_scope(db: Session, month: str, department: str | None, entity: str | 
         q = q.filter(MonthlyEmployeeSnapshot.department1 == department)
     if entity:
         q = q.filter(MonthlyEmployeeSnapshot.entity == entity)
-    return {row.staff_id: row for row in q.all()}
+    scoped = {
+        row.staff_id: _ScopedEmployee(row.staff_id, row.staff_name, row.job_grade, row.hr_cost) for row in q.all()
+    }
+
+    supq = db.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.month == month)
+    if department:
+        supq = supq.filter(SupplementalPaySnapshot.department1 == department)
+    if entity:
+        supq = supq.filter(SupplementalPaySnapshot.entity == entity)
+
+    unattributed = 0.0
+    for row in supq.all():
+        if row.staff_id in scoped:
+            scoped[row.staff_id].hr_cost += row.amount
+        else:
+            unattributed += row.amount
+
+    return scoped, unattributed
 
 
 def compute_attribution(
@@ -66,8 +105,8 @@ def compute_attribution(
     entity: str | None = None,
     top_n: int = 5,
 ) -> AttributionResult:
-    prev_emps = _fetch_scope(db, prev_month, department, entity)
-    cur_emps = _fetch_scope(db, cur_month, department, entity)
+    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity)
+    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity)
 
     prev_ids = set(prev_emps.keys())
     cur_ids = set(cur_emps.keys())
@@ -82,11 +121,12 @@ def compute_attribution(
     stayers_cur_cost = sum(cur_emps[i].hr_cost for i in stayers)
     stayers_delta = stayers_cur_cost - stayers_prev_cost
 
-    prev_total = sum(e.hr_cost for e in prev_emps.values())
-    cur_total = sum(e.hr_cost for e in cur_emps.values())
+    prev_total = sum(e.hr_cost for e in prev_emps.values()) + unattributed_prev
+    cur_total = sum(e.hr_cost for e in cur_emps.values()) + unattributed_cur
     net_change = cur_total - prev_total
+    unattributed_delta = unattributed_cur - unattributed_prev
 
-    checksum = joiners_cost - leavers_cost + stayers_delta
+    checksum = joiners_cost - leavers_cost + stayers_delta + unattributed_delta
     reconciled = abs(checksum - net_change) < 1
 
     stayer_deltas = sorted(
@@ -122,6 +162,9 @@ def compute_attribution(
         stayers_prev_cost=stayers_prev_cost,
         stayers_cur_cost=stayers_cur_cost,
         stayers_delta=stayers_delta,
+        unattributed_prev=unattributed_prev,
+        unattributed_cur=unattributed_cur,
+        unattributed_delta=unattributed_delta,
         checksum=checksum,
         reconciled=reconciled,
         top_increases=top_increases,

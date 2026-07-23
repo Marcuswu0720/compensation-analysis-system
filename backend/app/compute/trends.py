@@ -8,12 +8,27 @@ backed by the DB instead of a pickle file.
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..models import MonthlyEmployeeSnapshot
+from ..models import MonthlyEmployeeSnapshot, SupplementalPaySnapshot
 
 
 def list_available_months(db: Session) -> list[str]:
-    rows = db.query(MonthlyEmployeeSnapshot.month).distinct().order_by(MonthlyEmployeeSnapshot.month).all()
-    return [r[0] for r in rows]
+    base_months = {r[0] for r in db.query(MonthlyEmployeeSnapshot.month).distinct().all()}
+    supplemental_months = {r[0] for r in db.query(SupplementalPaySnapshot.month).distinct().all()}
+    return sorted(base_months | supplemental_months)
+
+
+def _supplemental_by_month(
+    db: Session, months: list[str] | None, department: str | None, entity: str | None
+) -> dict[str, float]:
+    q = db.query(SupplementalPaySnapshot.month, func.sum(SupplementalPaySnapshot.amount))
+    if months:
+        q = q.filter(SupplementalPaySnapshot.month.in_(months))
+    if department:
+        q = q.filter(SupplementalPaySnapshot.department1 == department)
+    if entity:
+        q = q.filter(SupplementalPaySnapshot.entity == entity)
+    q = q.group_by(SupplementalPaySnapshot.month)
+    return {month: amount or 0.0 for month, amount in q.all()}
 
 
 def get_trend(
@@ -41,9 +56,21 @@ def get_trend(
 
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
+    # Bonus/backpay files uploaded standalone (salary_type != 'base') add cost
+    # on top of the base batch for the same month without creating headcount -
+    # see ingestion/commit.py for why these live in a separate table.
+    supplemental = _supplemental_by_month(db, months, department, entity)
+    base_rows = {month: (headcount, total_hr_cost or 0.0) for month, headcount, total_hr_cost in q.all()}
+
+    # A month can have supplemental data uploaded before (or reassigned without)
+    # a base batch - don't silently drop that cost just because there's no
+    # base row to iterate from.
+    all_months = sorted(set(base_rows) | set(supplemental))
+
     results = []
-    for month, headcount, total_hr_cost in q.all():
-        total_hr_cost = total_hr_cost or 0.0
+    for month in all_months:
+        headcount, base_cost = base_rows.get(month, (0, 0.0))
+        total_hr_cost = base_cost + supplemental.get(month, 0.0)
         results.append(
             {
                 "month": month,

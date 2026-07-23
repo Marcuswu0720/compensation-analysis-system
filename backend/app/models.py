@@ -30,11 +30,14 @@ class UploadBatch(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     month: Mapped[str] = mapped_column(String(7), nullable=False)  # '2026-01'
+    salary_type: Mapped[str] = mapped_column(String(16), nullable=False, default="base")  # base | bonus | backpay
     original_filename: Mapped[str] = mapped_column(String(255))
     uploaded_by: Mapped[str] = mapped_column(String(64))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    status: Mapped[str] = mapped_column(String(16), default="pending_review")  # pending_review | confirmed | rejected
-    staged_data: Mapped[str] = mapped_column(Text)  # JSON blob: parsed employees/bonus/exits + summary
+    # pending_review | confirmed | rejected | superseded (replaced by a later confirmed
+    # upload for the same month+salary_type) | deleted
+    status: Mapped[str] = mapped_column(String(16), default="pending_review")
+    staged_data: Mapped[str] = mapped_column(Text)  # JSON blob: parsed rows + summary, shape depends on salary_type
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -88,6 +91,28 @@ class MonthlyBonusSnapshot(Base):
     other_income: Mapped[float] = mapped_column(Float, default=0.0)
     deduction: Mapped[float] = mapped_column(Float, default=0.0)
     bonus_total: Mapped[float] = mapped_column(Float, default=0.0)
+    upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
+
+
+class SupplementalPaySnapshot(Base):
+    """Extra pay added on top of a month's base salary batch: a standalone
+    bonus-correction file, or a one-off backpay file (e.g. overtime backpay
+    sheets that don't fit the standard Formal/Contract shape). Kept separate
+    from monthly_employee_snapshot so a 'base' re-upload never wipes these,
+    and vice versa - see ingestion/commit.py."""
+
+    __tablename__ = "supplemental_pay_snapshot"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    month: Mapped[str] = mapped_column(String(7), nullable=False)
+    pay_type: Mapped[str] = mapped_column(String(16), nullable=False)  # bonus | backpay
+    staff_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    staff_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    entity: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    department1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    source_sheet: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    matched_base_employee: Mapped[bool] = mapped_column(Boolean, default=False)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
 
 

@@ -28,3 +28,7 @@ class AttributionRequest(BaseModel):
     entity: str | None = None
     prev_month: str
     cur_month: str
+
+
+class ReassignMonthRequest(BaseModel):
+    new_month: str

@@ -25,6 +25,14 @@
           <label>数据月份</label>
           <input type="month" id="uploadMonth">
         </div>
+        <div>
+          <label>薪酬类型</label>
+          <select id="uploadSalaryType">
+            <option value="base">底薪批次（完整月度发薪表）</option>
+            <option value="bonus">奖金（单独的奖金文件）</option>
+            <option value="backpay">补发薪资（加班费补发等一次性文件）</option>
+          </select>
+        </div>
         <div style="flex:2;">
           <label>原始发薪表 Excel</label>
           <input type="file" id="uploadFile" accept=".xlsx">
@@ -33,11 +41,12 @@
           <button id="uploadBtn">上传并校验</button>
         </div>
       </div>
+      <div class="muted" style="margin-top:8px;">同一个月份可以分别上传"底薪批次/奖金/补发薪资"三种类型，三者的成本会自动加总；同一类型再次上传会替换掉该类型之前的数据，不影响其他类型。</div>
       <div class="error" id="uploadError"></div>
     </div>
 
     <div class="card" id="reviewCard" style="display:none; margin-top:16px;">
-      <h3>校验摘要 - <span id="reviewMonth"></span></h3>
+      <h3>校验摘要 - <span id="reviewMonth"></span> <span class="badge" id="reviewSalaryType" style="background:rgba(47,111,237,0.15);color:#2f6fed;"></span></h3>
       <div class="summary-grid" id="reviewSummary"></div>
       <div id="reviewIssuesWrap">
         <strong>需要注意的问题：</strong>

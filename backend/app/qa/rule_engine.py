@@ -186,9 +186,16 @@ def _format_attribution(result, department: str | None, entity: str | None, user
         f"  1) 新入职 {r.joiners_count} 人，带来成本 +{_fmt_money(r.joiners_cost)}",
         f"  2) 离职 {r.leavers_count} 人，减少成本 -{_fmt_money(r.leavers_cost)}",
         f"  3) 留任 {r.stayers_count} 人，成本变化 {'+' if r.stayers_delta >= 0 else ''}{_fmt_money(r.stayers_delta)}",
-        "",
-        f"校验：三项相加 = {_fmt_money(r.checksum)}（{'✓ 与净变化吻合' if r.reconciled else '✗ 与净变化不吻合，数据可能有问题，此结论需要人工复核'}）",
     ]
+    if r.unattributed_delta:
+        lines.append(
+            f"  4) 其他调整（无法关联到具体在职员工的奖金/补发） {'+' if r.unattributed_delta >= 0 else ''}{_fmt_money(r.unattributed_delta)}"
+        )
+    lines.append("")
+    lines.append(
+        f"校验：{'三项' if not r.unattributed_delta else '四项'}相加 = {_fmt_money(r.checksum)}"
+        f"（{'✓ 与净变化吻合' if r.reconciled else '✗ 与净变化不吻合，数据可能有问题，此结论需要人工复核'}）"
+    )
 
     if r.top_increases:
         lines.append("")

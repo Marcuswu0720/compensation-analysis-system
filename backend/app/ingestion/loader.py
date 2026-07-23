@@ -16,6 +16,9 @@ from ..models import DataQualityLog, MonthlyEmployeeSnapshot, UploadBatch
 from .constants import BONUS_MONTH_OFFSET, BONUS_SHEET_KEYS, EMPLOYEE_SHEET_KEYS
 from .normalize import NameResolver
 from .parser import get, parse_workbook
+from .supplemental import parse_supplemental_workbook
+
+SALARY_TYPES = ("base", "bonus", "backpay")
 
 
 def shift_month(month: str, offset: int) -> str:
@@ -37,7 +40,31 @@ def _is_active_employee(role: str, row: dict, hmap: dict) -> tuple[bool, str | N
     return False, str(exit_val)
 
 
-def stage_upload(db: Session, month: str, file_bytes: bytes, filename: str, uploaded_by: str) -> UploadBatch:
+def stage_upload(
+    db: Session, month: str, file_bytes: bytes, filename: str, uploaded_by: str, salary_type: str = "base"
+) -> UploadBatch:
+    if salary_type not in SALARY_TYPES:
+        raise ValueError(f"salary_type 必须是 {SALARY_TYPES} 之一")
+    if salary_type == "base":
+        staged_data = _stage_base(db, month, file_bytes)
+    else:
+        staged_data = _stage_supplemental(db, month, file_bytes, salary_type)
+
+    batch = UploadBatch(
+        month=month,
+        salary_type=salary_type,
+        original_filename=filename,
+        uploaded_by=uploaded_by,
+        status="pending_review",
+        staged_data=json.dumps(staged_data),
+    )
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+    return batch
+
+
+def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
     parsed = parse_workbook(io.BytesIO(file_bytes))
     resolver = NameResolver(db, month)
 
@@ -178,15 +205,69 @@ def stage_upload(db: Session, month: str, file_bytes: bytes, filename: str, uplo
             "sheets_found": {role: r.sheet_name for role, r in parsed.by_role.items()},
         },
     }
+    return staged_data
 
-    batch = UploadBatch(
-        month=month,
-        original_filename=filename,
-        uploaded_by=uploaded_by,
-        status="pending_review",
-        staged_data=json.dumps(staged_data),
-    )
-    db.add(batch)
-    db.commit()
-    db.refresh(batch)
-    return batch
+
+def _stage_supplemental(db: Session, month: str, file_bytes: bytes, salary_type: str) -> dict:
+    parsed = parse_supplemental_workbook(io.BytesIO(file_bytes))
+    resolver = NameResolver(db, month)
+
+    resolver.prepare("department", [r["department1_raw"] for r in parsed.rows])
+    resolver.prepare("entity", [r["entity_raw"] for r in parsed.rows])
+
+    base_employees = {
+        e.staff_id: e
+        for e in db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.month == month).all()
+    }
+
+    entries = []
+    unmatched_count = 0
+    for r in parsed.rows:
+        base = base_employees.get(r["staff_id"])
+        department1_raw = r["department1_raw"] or (base.department1_raw if base else None)
+        entity_raw = r["entity_raw"] or (base.entity if base else None)
+        matched = base is not None
+        if not matched:
+            unmatched_count += 1
+        entries.append(
+            {
+                "staff_id": r["staff_id"],
+                "staff_name": r["staff_name"] or (base.staff_name if base else None),
+                "department1": resolver.resolve("department", department1_raw),
+                "entity": resolver.resolve("entity", entity_raw),
+                "amount": r["amount"],
+                "source_sheet": r["source_sheet"],
+                "matched_base_employee": matched,
+            }
+        )
+
+    issues = [
+        {"issue_type": "unrecognized_sheet", "issue_detail": f"未能解析的sheet: {s}", "row_count_affected": 0}
+        for s in parsed.skipped_sheets
+    ]
+    if unmatched_count:
+        issues.append(
+            {
+                "issue_type": "unmatched_supplemental_staff",
+                "issue_detail": (
+                    f"有 {unmatched_count} 条记录的员工工号在 {month} 的底薪批次里找不到（可能底薪还没上传，"
+                    "或该员工当月不在职），这些金额仍会计入公司/部门总成本，但在归因分析里不会被归到具体某个人身上"
+                ),
+                "row_count_affected": unmatched_count,
+            }
+        )
+    issues.extend(resolver.flush_issues())
+
+    total_amount = sum(e["amount"] for e in entries)
+    return {
+        "entries": entries,
+        "issues": issues,
+        "summary": {
+            "salary_type": salary_type,
+            "row_count": len(entries),
+            "matched_count": len(entries) - unmatched_count,
+            "unmatched_count": unmatched_count,
+            "total_amount": total_amount,
+            "sheets_found": parsed.sheet_names,
+        },
+    }

@@ -6,6 +6,7 @@ Usage: python seed_admin.py <username> <password>
 import sys
 
 from app.database import Base, SessionLocal, engine
+from app.migrations import run_migrations
 from app.models import User
 from app.security import hash_password
 
@@ -17,6 +18,7 @@ def main():
     username, password = sys.argv[1], sys.argv[2]
 
     Base.metadata.create_all(bind=engine)
+    run_migrations(engine)
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.username == username).first()

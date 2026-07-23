@@ -103,3 +103,15 @@ def build_month2_workbook() -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def build_supplemental_workbook(rows: list[tuple[str, str, str, float]], sheet_name: str = "Backpay") -> bytes:
+    """rows: list of (staff_id, staff_name, department1, amount) - a standalone
+    bonus/backpay file, deliberately much simpler/looser than the main workbook
+    since these don't follow the fixed Formal/Contract shape."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _sheet(wb, sheet_name, ["Staff ID", "Staff Name", "Department 1", "HR Cost"], [list(r) for r in rows])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
