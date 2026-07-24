@@ -22,16 +22,20 @@ export const teamsApi = {
   setModeConfig: (id: string, mode: AttendanceMode) =>
     apiClient.put(`/teams/${id}/mode-config`, { mode }).then((r) => r.data),
   getOfficeRule: (id: string) => apiClient.get<OfficeAttendanceRule | null>(`/teams/${id}/office-rule`).then((r) => r.data),
-  setOfficeRule: (id: string, data: { startTime: string; endTime: string; lateGraceMinutes: number; earlyGraceMinutes: number }) =>
-    apiClient.put(`/teams/${id}/office-rule`, data).then((r) => r.data),
+  setOfficeRule: (
+    id: string,
+    data: { startTime: string; endTime: string; lateGraceMinutes: number; earlyGraceMinutes: number; officeIds?: string[] },
+  ) => apiClient.put(`/teams/${id}/office-rule`, data).then((r) => r.data),
 };
 
 export const officesApi = {
   list: () => apiClient.get<Office[]>('/offices').then((r) => r.data),
-  create: (data: { name: string; address?: string; gpsLat?: number; gpsLng?: number }) =>
+  create: (data: { name: string; address?: string; gpsLat?: number; gpsLng?: number; allowedRadiusMeters?: number }) =>
     apiClient.post<Office>('/offices', data).then((r) => r.data),
-  update: (id: string, data: Partial<{ name: string; address: string; gpsLat: number; gpsLng: number; isActive: boolean }>) =>
-    apiClient.patch<Office>(`/offices/${id}`, data).then((r) => r.data),
+  update: (
+    id: string,
+    data: Partial<{ name: string; address: string; gpsLat: number; gpsLng: number; allowedRadiusMeters: number; isActive: boolean }>,
+  ) => apiClient.patch<Office>(`/offices/${id}`, data).then((r) => r.data),
   remove: (id: string) => apiClient.delete(`/offices/${id}`).then((r) => r.data),
 };
 

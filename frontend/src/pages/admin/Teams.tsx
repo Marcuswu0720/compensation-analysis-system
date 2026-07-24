@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Button, Card, Form, Input, Modal, Select, Table, Tabs, Tree, Typography, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Modal, Select, Table, Tabs, Tree, Typography, message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { departmentsApi, teamsApi, officesApi } from '../../api/org';
+import { departmentsApi, teamsApi, officesApi, usersApi } from '../../api/org';
 import { useModeLabel } from '../../utils/status';
 import type { AttendanceMode, Department } from '../../api/types';
 
@@ -55,6 +55,7 @@ function TeamsTab() {
   const queryClient = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const { data: departments = [] } = useQuery({ queryKey: ['departments'], queryFn: departmentsApi.list });
+  const { data: users = [] } = useQuery({ queryKey: ['users-all'], queryFn: () => usersApi.list() });
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -76,11 +77,20 @@ function TeamsTab() {
     },
   });
 
+  const leaderMutation = useMutation({
+    mutationFn: ({ id, leaderId }: { id: string; leaderId: string | undefined }) => teamsApi.update(id, { leaderId }),
+    onSuccess: () => {
+      message.success(t('adminTeams.leaderUpdated'));
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+    },
+  });
+
   return (
     <div>
       <Button type="primary" style={{ marginBottom: 16 }} onClick={() => setModalOpen(true)}>
         {t('adminTeams.addTeam')}
       </Button>
+      <Typography.Paragraph type="secondary">{t('adminTeams.leaderHelp')}</Typography.Paragraph>
       <Table
         rowKey="id"
         scroll={{ x: "max-content" }}
@@ -97,6 +107,19 @@ function TeamsTab() {
                 placeholder={t('adminTeams.modeNotSet')}
                 onChange={(mode) => modeMutation.mutate({ id: r.id, mode })}
                 options={Object.entries(modeLabel).map(([k, v]) => ({ value: k, label: v }))}
+              />
+            ),
+          },
+          {
+            title: t('adminTeams.leaderColumn'),
+            render: (_, r: any) => (
+              <Select
+                style={{ width: 180 }}
+                allowClear
+                value={r.leaderId ?? undefined}
+                placeholder={t('adminTeams.leaderNotSet')}
+                onChange={(leaderId) => leaderMutation.mutate({ id: r.id, leaderId })}
+                options={users.filter((u) => u.teamId === r.id).map((u) => ({ value: u.id, label: `${u.name}(${u.employeeNo})` }))}
               />
             ),
           },
@@ -147,10 +170,11 @@ function OfficesTab() {
           { title: t('adminTeams.address'), dataIndex: 'address' },
           { title: t('adminTeams.lat'), dataIndex: 'gpsLat' },
           { title: t('adminTeams.lng'), dataIndex: 'gpsLng' },
+          { title: t('adminTeams.radius'), dataIndex: 'allowedRadiusMeters', render: (v) => `${v}m` },
         ]}
       />
       <Modal title={t('adminTeams.addOfficeTitle')} open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} confirmLoading={createMutation.isPending}>
-        <Form layout="vertical" form={form} onFinish={(v) => createMutation.mutate(v)}>
+        <Form layout="vertical" form={form} onFinish={(v) => createMutation.mutate(v)} initialValues={{ allowedRadiusMeters: 300 }}>
           <Form.Item name="name" label={t('adminTeams.officeName')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -162,6 +186,9 @@ function OfficesTab() {
           </Form.Item>
           <Form.Item name="gpsLng" label={t('adminTeams.lng')}>
             <Input type="number" />
+          </Form.Item>
+          <Form.Item name="allowedRadiusMeters" label={t('adminTeams.radius')}>
+            <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>

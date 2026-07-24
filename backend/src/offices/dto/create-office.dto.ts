@@ -15,4 +15,8 @@ export class CreateOfficeDto {
   @IsOptional()
   @IsNumber()
   gpsLng?: number;
+
+  @IsOptional()
+  @IsNumber()
+  allowedRadiusMeters?: number;
 }

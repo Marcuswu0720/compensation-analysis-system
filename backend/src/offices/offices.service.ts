@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Office } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOfficeDto } from './dto/create-office.dto';
 import { UpdateOfficeDto } from './dto/update-office.dto';
@@ -42,6 +43,19 @@ export class OfficesService {
       }
     }
     return nearest ? { office: nearest, distanceKm: minDist } : null;
+  }
+
+  // 团队关联办公室后的打卡范围校验（问题反馈 1.1）：只要落在任一关联办公室的允许半径内即视为合规
+  findNearestWithin(lat: number, lng: number, offices: Office[]): { office: Office; distanceMeters: number } | null {
+    let nearest: { office: Office; distanceMeters: number } | null = null;
+    for (const office of offices) {
+      if (office.gpsLat == null || office.gpsLng == null) continue;
+      const distanceMeters = haversine(lat, lng, office.gpsLat, office.gpsLng) * 1000;
+      if (distanceMeters <= office.allowedRadiusMeters && (!nearest || distanceMeters < nearest.distanceMeters)) {
+        nearest = { office, distanceMeters };
+      }
+    }
+    return nearest;
   }
 }
 

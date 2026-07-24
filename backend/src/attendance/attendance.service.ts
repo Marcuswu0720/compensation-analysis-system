@@ -96,7 +96,7 @@ export class AttendanceService {
       }
 
       const officeRule = user.teamId
-        ? await this.prisma.officeAttendanceRule.findUnique({ where: { teamId: user.teamId } })
+        ? await this.prisma.officeAttendanceRule.findUnique({ where: { teamId: user.teamId }, include: { offices: true } })
         : null;
 
       if (!officeRule) {
@@ -107,6 +107,17 @@ export class AttendanceService {
           ? '所属团队未配置打卡规则（上班时间/迟到宽限），请联系本地HR前往"考勤规则配置-办公室打卡规则"设置'
           : '员工未分配所属团队，请联系本地HR在"员工管理"中为其分配团队';
       } else {
+        // 团队关联了办公室时才做地理围栏校验，未关联的团队沿用原行为不做限制（问题反馈 1.1）
+        if (rule.officeAssignmentMode !== 'NEAREST_AUTO' && officeRule.offices.length > 0) {
+          if (dto.lat === undefined || dto.lng === undefined) {
+            throw new BadRequestException('该团队已限定打卡范围，请开启定位权限后重试');
+          }
+          const within = this.offices.findNearestWithin(dto.lat, dto.lng, officeRule.offices);
+          if (!within) {
+            throw new BadRequestException('当前不在所属办公室允许的打卡范围内，请前往办公室后重试');
+          }
+          matchedOfficeId = within.office.id;
+        }
         const graceStart = combineBusinessDateAndTime(today, officeRule.startTime);
         graceStart.setUTCMinutes(graceStart.getUTCMinutes() + officeRule.lateGraceMinutes);
         lateMinutes = Math.max(0, Math.round((now.getTime() - graceStart.getTime()) / 60000));

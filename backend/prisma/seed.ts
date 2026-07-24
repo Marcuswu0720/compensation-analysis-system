@@ -50,6 +50,11 @@ async function main() {
       { teamId: fieldCollectionTeam.id, startTime: '09:00', endTime: '18:00', lateGraceMinutes: 15, earlyGraceMinutes: 0 },
     ],
   });
+  // IT团队关联 Lagos 办公室，打卡时校验地理围栏范围（问题反馈 1.1）
+  await prisma.officeAttendanceRule.update({
+    where: { teamId: itTeam.id },
+    data: { offices: { connect: [{ id: lagosOffice.id }] } },
+  });
 
   await prisma.shift.createMany({
     data: [
@@ -87,9 +92,14 @@ async function main() {
         requiresBusinessMetric: true,
         businessMetricThreshold: 8, // 超过8家商户才算出勤
         businessMetricSource: 'MANUAL',
-        officeAssignmentMode: OfficeAssignmentMode.NONE,
+        officeAssignmentMode: OfficeAssignmentMode.FIXED, // 拍照打卡校验是否在有效范围内（问题反馈 2.5）
       },
     ],
+  });
+  // 码牌团队的有效打卡范围关联 Lagos 办公室（问题反馈 2.5，仅作标记不阻断打卡）
+  await prisma.teamAttendanceRuleTemplate.update({
+    where: { teamId: smeBdTeam.id },
+    data: { offices: { connect: [{ id: lagosOffice.id }] } },
   });
 
   // --- 请假类型（10.3 可配置枚举） ---
@@ -138,6 +148,9 @@ async function main() {
       officeId: lagosOffice.id,
     },
   });
+
+  // 码牌团队负责人是 Chidi 本人：定位打卡审核不能自审自批，需交由本地HR审核（问题反馈 2.1）
+  await prisma.team.update({ where: { id: smeBdTeam.id }, data: { leaderId: localManager.id } });
 
   await prisma.user.create({
     data: {

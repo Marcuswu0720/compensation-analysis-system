@@ -3,7 +3,7 @@ import { Alert, Button, Card, DatePicker, Form, Input, InputNumber, Popconfirm, 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
-import { teamsApi } from '../../api/org';
+import { teamsApi, officesApi } from '../../api/org';
 import { ruleTemplatesApi } from '../../api/ruleTemplates';
 import { leaveApi } from '../../api/leaveOvertime';
 import { holidaysApi } from '../../api/reportsHolidays';
@@ -12,12 +12,17 @@ function OfficeRuleTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
+  const { data: offices = [] } = useQuery({ queryKey: ['offices'], queryFn: officesApi.list });
   const [teamId, setTeamId] = useState<string>();
   const { data: rule } = useQuery({ queryKey: ['office-rule', teamId], queryFn: () => teamsApi.getOfficeRule(teamId!), enabled: !!teamId });
   const [form] = Form.useForm();
 
   useEffect(() => {
-    form.setFieldsValue(rule ?? { startTime: '09:00', endTime: '18:00', lateGraceMinutes: 0, earlyGraceMinutes: 0 });
+    form.setFieldsValue(
+      rule
+        ? { ...rule, officeIds: rule.offices.map((o) => o.id) }
+        : { startTime: '09:00', endTime: '18:00', lateGraceMinutes: 0, earlyGraceMinutes: 0, officeIds: [] },
+    );
   }, [rule, form]);
 
   const mutation = useMutation({
@@ -45,6 +50,9 @@ function OfficeRuleTab() {
           <Form.Item name="earlyGraceMinutes" label={t('adminRules.earlyGrace')} rules={[{ required: true }]}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item name="officeIds" label={t('adminRules.associatedOffices')} help={t('adminRules.associatedOfficesHelp')}>
+            <Select mode="multiple" allowClear options={offices.map((o) => ({ value: o.id, label: `${o.name} (±${o.allowedRadiusMeters}m)` }))} />
+          </Form.Item>
           <Button type="primary" htmlType="submit" loading={mutation.isPending}>
             {t('common.save')}
           </Button>
@@ -58,10 +66,12 @@ function RuleTemplateTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
+  const { data: allOffices = [] } = useQuery({ queryKey: ['offices'], queryFn: officesApi.list });
   const [teamId, setTeamId] = useState<string>();
   const { data: template } = useQuery({ queryKey: ['rule-template', teamId], queryFn: () => ruleTemplatesApi.get(teamId!), enabled: !!teamId });
   const { data: officeRule } = useQuery({ queryKey: ['office-rule', teamId], queryFn: () => teamsApi.getOfficeRule(teamId!), enabled: !!teamId });
   const [form] = Form.useForm();
+  const officeAssignmentMode = Form.useWatch('officeAssignmentMode', form);
   // 仅在"已保存的团队规则模板"明确要求标准打卡（非拍照流程、且指定了办公室分配方式）时才提示，
   // 避免对排班打卡等团队因表单默认值误报（问题反馈 2.3：地催团队正是这种配置组合导致遗漏了办公室打卡规则）
   const missingOfficeRule =
@@ -69,13 +79,16 @@ function RuleTemplateTab() {
 
   useEffect(() => {
     form.setFieldsValue(
-      template ?? {
-        requiresClockIn: true,
-        requiresClockOut: true,
-        requiresPhoto: false,
-        requiresBusinessMetric: false,
-        officeAssignmentMode: 'NONE',
-      },
+      template
+        ? { ...template, officeIds: template.offices.map((o) => o.id) }
+        : {
+            requiresClockIn: true,
+            requiresClockOut: true,
+            requiresPhoto: false,
+            requiresBusinessMetric: false,
+            officeAssignmentMode: 'NONE',
+            officeIds: [],
+          },
     );
   }, [template, form]);
 
@@ -148,6 +161,11 @@ function RuleTemplateTab() {
               ]}
             />
           </Form.Item>
+          {officeAssignmentMode === 'FIXED' && (
+            <Form.Item name="officeIds" label={t('adminRules.fixedOffices')} help={t('adminRules.fixedOfficesHelp')}>
+              <Select mode="multiple" allowClear options={allOffices.map((o) => ({ value: o.id, label: `${o.name} (±${o.allowedRadiusMeters}m)` }))} />
+            </Form.Item>
+          )}
           <Space>
             <Button type="primary" htmlType="submit" loading={mutation.isPending}>
               {t('common.save')}

@@ -12,19 +12,28 @@ export class RuleTemplatesService {
   ) {}
 
   findOne(teamId: string) {
-    return this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId } });
+    return this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId }, include: { offices: true } });
   }
 
   findAll() {
-    return this.prisma.teamAttendanceRuleTemplate.findMany({ include: { team: true } });
+    return this.prisma.teamAttendanceRuleTemplate.findMany({ include: { team: true, offices: true } });
   }
 
   async upsert(teamId: string, dto: UpsertRuleTemplateDto, operatorId: string) {
-    const before = await this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId } });
+    const { officeIds, ...rest } = dto;
+    const before = await this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId }, include: { offices: true } });
     const after = await this.prisma.teamAttendanceRuleTemplate.upsert({
       where: { teamId },
-      create: { teamId, ...dto },
-      update: dto,
+      create: {
+        teamId,
+        ...rest,
+        offices: officeIds ? { connect: officeIds.map((id) => ({ id })) } : undefined,
+      },
+      update: {
+        ...rest,
+        offices: { set: (officeIds ?? []).map((id) => ({ id })) },
+      },
+      include: { offices: true },
     });
     await this.audit.log({
       entityType: 'RULE_CONFIG',

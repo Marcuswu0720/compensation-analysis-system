@@ -62,13 +62,24 @@ export class TeamsService {
     return this.prisma.teamAttendanceModeConfig.findUnique({ where: { teamId } });
   }
 
-  // 10.3 办公室打卡规则：上下班时间、迟到/早退宽限时间
+  // 10.3 办公室打卡规则：上下班时间、迟到/早退宽限时间 + 关联办公室（问题反馈 1.1，用于打卡地理围栏）
   async setOfficeRule(teamId: string, dto: SetOfficeRuleDto, operatorId: string) {
-    const before = await this.prisma.officeAttendanceRule.findUnique({ where: { teamId } });
+    const { officeIds, ...rest } = dto;
+    const before = await this.prisma.officeAttendanceRule.findUnique({ where: { teamId }, include: { offices: true } });
     const after = await this.prisma.officeAttendanceRule.upsert({
       where: { teamId },
-      create: { teamId, ...dto, updatedBy: operatorId },
-      update: { ...dto, updatedBy: operatorId },
+      create: {
+        teamId,
+        ...rest,
+        updatedBy: operatorId,
+        offices: officeIds ? { connect: officeIds.map((id) => ({ id })) } : undefined,
+      },
+      update: {
+        ...rest,
+        updatedBy: operatorId,
+        offices: { set: (officeIds ?? []).map((id) => ({ id })) },
+      },
+      include: { offices: true },
     });
     await this.audit.log({
       entityType: 'OFFICE_ATTENDANCE_RULE',
@@ -81,6 +92,6 @@ export class TeamsService {
   }
 
   getOfficeRule(teamId: string) {
-    return this.prisma.officeAttendanceRule.findUnique({ where: { teamId } });
+    return this.prisma.officeAttendanceRule.findUnique({ where: { teamId }, include: { offices: true } });
   }
 }

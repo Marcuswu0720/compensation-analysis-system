@@ -55,8 +55,8 @@ export class LocationCheckinController {
 
   @Roles(Role.LOCAL_MANAGER, Role.LOCAL_HR)
   @Get('pending')
-  findPending() {
-    return this.locationCheckinService.findPending();
+  findPending(@CurrentUser() user: AuthUser) {
+    return this.locationCheckinService.findPending(user);
   }
 
   // 定位打卡员工本人也可以查看自己的打卡轨迹照片（问题反馈 4.3），非本人则需要小管理者/本地HR权限
@@ -77,14 +77,14 @@ export class LocationCheckinController {
     @CurrentUser() user: AuthUser,
   ) {
     if (user.role === Role.EMPLOYEE) {
-      return this.locationCheckinService.findAll({ userId: user.id, from, to, verifyStatus });
+      return this.locationCheckinService.findAll({ userId: user.id, from, to, verifyStatus }, user);
     }
-    return this.locationCheckinService.findAll({ userId, teamId, from, to, verifyStatus });
+    return this.locationCheckinService.findAll({ userId, teamId, from, to, verifyStatus }, user);
   }
 
   @Roles(Role.LOCAL_MANAGER, Role.LOCAL_HR)
   @Patch(':id/verify')
   verify(@Param('id') id: string, @Body() dto: VerifyPhotoDto, @CurrentUser() user: AuthUser) {
-    return this.locationCheckinService.verify(id, dto.status, dto.remark, user.id);
+    return this.locationCheckinService.verify(id, dto.status, dto.remark, user);
   }
 }

@@ -181,6 +181,11 @@ export default function ClockIn() {
                   <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={136} fallback={PHOTO_FALLBACK} />
                   <div style={{ marginTop: 8 }}>
                     <Tag color={VERIFY_COLOR[photo.verifyStatus]}>{verifyLabel[photo.verifyStatus]}</Tag>
+                    {photo.isWithinRange !== null && (
+                      <Tag color={photo.isWithinRange ? 'green' : 'red'}>
+                        {photo.isWithinRange ? t('clockIn.withinRangeYes') : t('clockIn.withinRangeNo')}
+                      </Tag>
+                    )}
                   </div>
                 </Card>
               ))}

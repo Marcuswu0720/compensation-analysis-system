@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { OfficeAssignmentMode } from '@prisma/client';
 
 export class UpsertRuleTemplateDto {
@@ -30,4 +30,10 @@ export class UpsertRuleTemplateDto {
 
   @IsEnum(OfficeAssignmentMode)
   officeAssignmentMode: OfficeAssignmentMode;
+
+  // officeAssignmentMode 为 FIXED 时，关联的有效打卡地点（问题反馈 2.5）
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  officeIds?: string[];
 }

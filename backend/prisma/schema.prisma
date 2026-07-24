@@ -40,18 +40,21 @@ model Department {
 }
 
 model Office {
-  id        String   @id @default(uuid())
-  name      String
-  address   String?
-  gpsLat    Float?
-  gpsLng    Float?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  name                String
+  address             String?
+  gpsLat              Float?
+  gpsLng              Float?
+  allowedRadiusMeters Int      @default(300) // 打卡地理围栏允许半径（米），用于团队关联办公室后的范围校验（问题反馈 1.1）
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  officeStaff        User[]               @relation("UserOffice")
-  specialEventOffice SpecialEventOffice[]
-  matchedAttendance  AttendanceRecord[]
+  officeStaff          User[]                        @relation("UserOffice")
+  specialEventOffice   SpecialEventOffice[]
+  matchedAttendance    AttendanceRecord[]
+  officeAttendanceRule OfficeAttendanceRule[]        @relation("OfficeRuleOffices")
+  ruleTemplates        TeamAttendanceRuleTemplate[]  @relation("RuleTemplateOffices")
 }
 
 // 团队/岗位（挂在部门下，作为打卡模式配置、规则模板的最小单元）
@@ -159,6 +162,9 @@ model OfficeAttendanceRule {
   updatedBy         String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  // 团队关联的办公室（问题反馈 1.1）：打卡时的地理围栏范围以此为准；未关联任何办公室时不做范围校验（沿用原行为）
+  offices Office[] @relation("OfficeRuleOffices")
 }
 
 enum AttendanceStatus {
@@ -310,6 +316,7 @@ model LocationCheckInPhoto {
   verifyStatus        VerifyStatus @default(PENDING)
   monthlySummaryId    String?
   businessMetricValue Int? // 如码牌团队当日部署商户数
+  isWithinRange       Boolean? // 是否在团队关联的有效打卡范围内；团队未配置 FIXED 范围时为 null（不适用，问题反馈 2.5）
   createdAt           DateTime     @default(now())
 
   @@index([userId, takenAt])
@@ -329,6 +336,9 @@ model TeamAttendanceRuleTemplate {
   officeAssignmentMode          OfficeAssignmentMode @default(NONE)
   createdAt                     DateTime             @default(now())
   updatedAt                     DateTime             @updatedAt
+
+  // officeAssignmentMode = FIXED 时，拍照打卡会校验 GPS 是否落在这些关联地点的允许半径内（问题反馈 2.5）
+  offices Office[] @relation("RuleTemplateOffices")
 }
 
 enum OfficeAssignmentMode {

@@ -43,6 +43,7 @@ export interface Team {
   name: string;
   departmentId: string;
   leaderId: string | null;
+  leader?: { id: string; name: string } | null;
   department?: Department;
   modeConfig?: { mode: AttendanceMode } | null;
 }
@@ -53,6 +54,7 @@ export interface Office {
   address: string | null;
   gpsLat: number | null;
   gpsLng: number | null;
+  allowedRadiusMeters: number;
   isActive: boolean;
 }
 
@@ -133,6 +135,7 @@ export interface LocationCheckInPhoto {
   verifiedAt: string | null;
   verifyStatus: VerifyStatus;
   businessMetricValue: number | null;
+  isWithinRange: boolean | null;
   user?: { id: string; name: string; employeeNo: string; team?: Team };
 }
 
@@ -183,6 +186,7 @@ export interface RuleTemplate {
   businessMetricThreshold: number | null;
   businessMetricSource: string | null;
   officeAssignmentMode: OfficeAssignmentMode;
+  offices: Office[];
 }
 
 export interface OfficeAttendanceRule {
@@ -192,6 +196,7 @@ export interface OfficeAttendanceRule {
   endTime: string;
   lateGraceMinutes: number;
   earlyGraceMinutes: number;
+  offices: Office[];
 }
 
 export interface ReportSummaryRow {

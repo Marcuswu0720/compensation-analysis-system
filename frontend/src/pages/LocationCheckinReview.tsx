@@ -25,6 +25,10 @@ function PendingTab() {
       setRemark('');
       queryClient.invalidateQueries({ queryKey: ['location-pending'] });
     },
+    onError: (e: any) => {
+      message.error(e?.response?.data?.message ?? t('common.opFailed'));
+      queryClient.invalidateQueries({ queryKey: ['location-pending'] });
+    },
   });
 
   return (
@@ -40,6 +44,18 @@ function PendingTab() {
           { title: t('locationCheckinReview.takenAt'), dataIndex: 'takenAt', render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
           { title: t('locationCheckinReview.gps'), render: (_, r: any) => `${r.gpsLat.toFixed(4)}, ${r.gpsLng.toFixed(4)}` },
           { title: t('locationCheckinReview.businessMetric'), dataIndex: 'businessMetricValue' },
+          {
+            title: t('locationCheckinReview.withinRange'),
+            dataIndex: 'isWithinRange',
+            render: (v: boolean | null) =>
+              v === null ? (
+                <Tag>{t('locationCheckinReview.rangeNotApplicable')}</Tag>
+              ) : v ? (
+                <Tag color="green">{t('locationCheckinReview.withinRangeYes')}</Tag>
+              ) : (
+                <Tag color="red">{t('locationCheckinReview.withinRangeNo')}</Tag>
+              ),
+          },
           {
             title: t('common.actions'),
             render: (_, r: any) => (
@@ -94,6 +110,11 @@ function TrajectoryTab() {
             <Image src={`${API_ORIGIN}${photo.photoUrl}`} width={150} fallback={PHOTO_FALLBACK} />
             <div style={{ marginTop: 8 }}>
               <Tag color={VERIFY_COLOR[photo.verifyStatus]}>{verifyLabel[photo.verifyStatus]}</Tag>
+              {photo.isWithinRange !== null && (
+                <Tag color={photo.isWithinRange ? 'green' : 'red'}>
+                  {photo.isWithinRange ? t('locationCheckinReview.withinRangeYes') : t('locationCheckinReview.withinRangeNo')}
+                </Tag>
+              )}
             </div>
             <div style={{ fontSize: 12, color: '#888' }}>
               {photo.gpsLat.toFixed(4)}, {photo.gpsLng.toFixed(4)}

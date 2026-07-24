@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AttendanceSource, AttendanceStatus, AuditAction, VerifyStatus } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { AttendanceSource, AttendanceStatus, AuditAction, OfficeAssignmentMode, Role, VerifyStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { OfficesService } from '../offices/offices.service';
 import { combineBusinessDateAndTime, toBusinessDateOnly } from '../common/date-utils';
 
 interface UploadParams {
@@ -26,6 +27,7 @@ const PHOTO_LIST_SELECT = {
   verifyStatus: true,
   businessMetricValue: true,
   monthlySummaryId: true,
+  isWithinRange: true,
   createdAt: true,
 } as const;
 
@@ -34,6 +36,7 @@ export class LocationCheckinService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private offices: OfficesService,
   ) {}
 
   // 6.3: 定位照片、记录时间、记录人三者必须一并保存；7.2: 两张照片间隔超阈值触发预警（记入审计日志作为质检介入依据）
@@ -43,8 +46,15 @@ export class LocationCheckinService {
 
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: params.userId } });
     const ruleTemplate = user.teamId
-      ? await this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId: user.teamId } })
+      ? await this.prisma.teamAttendanceRuleTemplate.findUnique({ where: { teamId: user.teamId }, include: { offices: true } })
       : null;
+
+    // 码牌团队"定位范围内打卡"（问题反馈 2.5）：officeAssignmentMode 为 FIXED 且关联了有效地点时，
+    // 校验 GPS 是否落在允许半径内，仅作标记不阻断打卡（业务方尚未确认是否要强制拦截）
+    const isWithinRange =
+      ruleTemplate?.officeAssignmentMode === OfficeAssignmentMode.FIXED && ruleTemplate.offices.length > 0
+        ? !!this.offices.findNearestWithin(params.gpsLat, params.gpsLng, ruleTemplate.offices)
+        : null;
 
     const created = await this.prisma.locationCheckInPhoto.create({
       data: {
@@ -56,6 +66,7 @@ export class LocationCheckinService {
         gpsLng: params.gpsLng,
         takenAt,
         businessMetricValue: params.businessMetricValue,
+        isWithinRange,
       },
     });
     const photo = await this.prisma.locationCheckInPhoto.update({
@@ -118,7 +129,10 @@ export class LocationCheckinService {
     return photo;
   }
 
-  findAll(filters: { userId?: string; teamId?: string; from?: string; to?: string; verifyStatus?: VerifyStatus }) {
+  findAll(
+    filters: { userId?: string; teamId?: string; from?: string; to?: string; verifyStatus?: VerifyStatus },
+    operator: { id: string; role: Role },
+  ) {
     return this.prisma.locationCheckInPhoto.findMany({
       where: {
         userId: filters.userId,
@@ -127,19 +141,26 @@ export class LocationCheckinService {
           gte: filters.from ? new Date(filters.from) : undefined,
           lte: filters.to ? new Date(filters.to) : undefined,
         },
-        user: filters.teamId ? { teamId: filters.teamId } : undefined,
+        user: { teamId: filters.teamId, ...this.excludeOwnLedTeam(operator) },
       },
       select: { ...PHOTO_LIST_SELECT, user: { select: { id: true, name: true, employeeNo: true, team: true } } },
       orderBy: { takenAt: 'asc' },
     });
   }
 
-  findPending() {
+  findPending(operator: { id: string; role: Role }) {
     return this.prisma.locationCheckInPhoto.findMany({
-      where: { verifyStatus: VerifyStatus.PENDING },
+      where: { verifyStatus: VerifyStatus.PENDING, user: this.excludeOwnLedTeam(operator) },
       select: { ...PHOTO_LIST_SELECT, user: { select: { id: true, name: true, employeeNo: true, team: true } } },
       orderBy: { takenAt: 'asc' },
     });
+  }
+
+  // 团队 Manager 不能审核自己所带团队的定位打卡记录，需上一级（本地HR）审核（问题反馈 2.1）
+  // team 是可选关系：isNot 在关联为空或关联存在但不匹配时都成立，正好覆盖"未分配团队的员工仍应正常显示"的情况
+  private excludeOwnLedTeam(operator: { id: string; role: Role }) {
+    if (operator.role !== Role.LOCAL_MANAGER) return {};
+    return { team: { isNot: { leaderId: operator.id } } };
   }
 
   // 打卡轨迹：某员工某天的照片按时间顺序展示（按业务时区取自然日边界，见问题反馈 2.5 的统一处理方式）
@@ -153,14 +174,17 @@ export class LocationCheckinService {
     });
   }
 
-  async verify(id: string, status: VerifyStatus, remark: string | undefined, operatorId: string) {
-    const photo = await this.prisma.locationCheckInPhoto.findUniqueOrThrow({ where: { id } });
+  async verify(id: string, status: VerifyStatus, remark: string | undefined, operator: { id: string; role: Role }) {
+    const photo = await this.prisma.locationCheckInPhoto.findUniqueOrThrow({ where: { id }, include: { user: { include: { team: true } } } });
     if (photo.verifyStatus !== VerifyStatus.PENDING) {
       throw new BadRequestException('该记录已核实过，不能重复操作');
     }
+    if (operator.role === Role.LOCAL_MANAGER && photo.user.team?.leaderId === operator.id) {
+      throw new ForbiddenException('不能审核本团队自己的打卡记录，请联系本地HR审核');
+    }
     const updated = await this.prisma.locationCheckInPhoto.update({
       where: { id },
-      data: { verifyStatus: status, verifiedById: operatorId, verifiedAt: new Date() },
+      data: { verifyStatus: status, verifiedById: operator.id, verifiedAt: new Date() },
       select: PHOTO_LIST_SELECT,
     });
 
@@ -168,7 +192,7 @@ export class LocationCheckinService {
       entityType: 'LOCATION_CHECKIN',
       entityId: id,
       action: AuditAction.VERIFY,
-      operatorId,
+      operatorId: operator.id,
       detail: { status, remark },
     });
 
