@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 import bcrypt
@@ -11,6 +12,17 @@ from .database import get_db
 from .models import User, ViewerPermission
 
 serializer = URLSafeTimedSerializer(settings.secret_key, salt="session")
+
+
+def normalize_username(username: str) -> str:
+    """Collapses any run of whitespace (including a full-width IME space,
+    which Python's \\s matches) down to a single regular space and trims the
+    ends. Account creation, password reset, and login all funnel the
+    username through this, so a full-width space typed by accident in one
+    place but not the other (an easy mistake when switching in/out of a
+    Chinese input method) can't silently make two identical-looking
+    usernames fail to match."""
+    return re.sub(r"\s+", " ", username.strip())
 
 
 def hash_password(password: str) -> str:

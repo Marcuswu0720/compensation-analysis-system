@@ -14,6 +14,7 @@ from sqlalchemy import MetaData, Table, inspect, text
 from sqlalchemy.engine import Engine
 
 from .models import MonthlyBonusSnapshot, MonthlyEmployeeSnapshot, ViewerPermission
+from .security import normalize_username
 
 
 SALARY_COMPONENT_COLUMNS = [
@@ -44,6 +45,7 @@ def run_migrations(engine: Engine) -> None:
         if "is_active" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+        _normalize_existing_usernames(engine)
 
     if "monthly_employee_snapshot" in inspector.get_table_names():
         columns = {c["name"] for c in inspector.get_columns("monthly_employee_snapshot")}
@@ -71,6 +73,24 @@ def run_migrations(engine: Engine) -> None:
     _drop_unique_constraint_via_rebuild(engine, inspector, "monthly_bonus_snapshot", MonthlyBonusSnapshot)
 
     _migrate_viewer_permissions_to_entity_rules(engine, inspector)
+
+
+def _normalize_existing_usernames(engine: Engine) -> None:
+    """Retroactively fixes usernames created before login/create_user started
+    calling normalize_username() - most importantly a stray full-width IME
+    space (visually near-identical to a normal space, but a different
+    character), which made a correctly-typed login permanently fail with
+    "用户名或密码错误" for an account whose name looks fine at a glance.
+    Skips a rename if it would collide with another existing username -
+    that case needs a human to pick a name, not a silent auto-merge."""
+    with engine.begin() as conn:
+        rows = conn.execute(text("SELECT id, username FROM users")).fetchall()
+        existing = {r.username for r in rows}
+        for row in rows:
+            normalized = normalize_username(row.username)
+            if normalized != row.username and normalized not in existing:
+                conn.execute(text("UPDATE users SET username = :new WHERE id = :id"), {"new": normalized, "id": row.id})
+                existing.add(normalized)
 
 
 def _drop_unique_constraint_via_rebuild(engine: Engine, inspector, table_name: str, model) -> None:

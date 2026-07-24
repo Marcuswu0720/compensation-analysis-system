@@ -8,15 +8,17 @@ from ..config import settings
 from ..database import get_db
 from ..models import DataOperationLog, User, ViewerPermission
 from ..schemas import CreateUserRequest, GrantPermissionRequest, LoginRequest, ResetPasswordRequest, SetUserActiveRequest
-from ..security import create_session_token, get_current_user, hash_password, require_admin, verify_password
+from ..security import create_session_token, get_current_user, hash_password, normalize_username, require_admin, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login")
 def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == payload.username).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+    username = normalize_username(payload.username)
+    password = payload.password.strip()
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:
         raise HTTPException(status_code=401, detail="账号已被禁用，请联系管理员")
@@ -46,9 +48,13 @@ def me(user: User = Depends(get_current_user)):
 def create_user(payload: CreateUserRequest, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     if payload.role not in ("admin", "viewer"):
         raise HTTPException(status_code=400, detail="role 必须是 admin 或 viewer")
-    if db.query(User).filter(User.username == payload.username).first():
+    username = normalize_username(payload.username)
+    password = payload.password.strip()
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="用户名和密码不能为空")
+    if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="用户名已存在")
-    user = User(username=payload.username, password_hash=hash_password(payload.password), role=payload.role)
+    user = User(username=username, password_hash=hash_password(password), role=payload.role)
     db.add(user)
     db.commit()
     return {"username": user.username, "role": user.role}
@@ -81,9 +87,10 @@ def reset_password(
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
-    if not payload.new_password:
+    new_password = payload.new_password.strip()
+    if not new_password:
         raise HTTPException(status_code=400, detail="新密码不能为空")
-    target.password_hash = hash_password(payload.new_password)
+    target.password_hash = hash_password(new_password)
     db.commit()
     return {"ok": True}
 

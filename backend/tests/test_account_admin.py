@@ -7,9 +7,9 @@ import pytest
 from fastapi import HTTPException, Response
 
 from app.models import User, ViewerPermission
-from app.routers.auth import grant_permission, list_permissions, login, reset_password, revoke_permission, set_user_active
-from app.schemas import GrantPermissionRequest, LoginRequest, ResetPasswordRequest, SetUserActiveRequest
-from app.security import hash_password, verify_password
+from app.routers.auth import create_user, grant_permission, list_permissions, login, reset_password, revoke_permission, set_user_active
+from app.schemas import CreateUserRequest, GrantPermissionRequest, LoginRequest, ResetPasswordRequest, SetUserActiveRequest
+from app.security import hash_password, normalize_username, verify_password
 
 
 def _make_user(db, username, role="viewer", password="pw12345"):
@@ -110,3 +110,35 @@ def test_revoke_permission_is_soft_and_recorded(db_session):
     # The row itself was never deleted.
     row = db_session.query(ViewerPermission).filter(ViewerPermission.id == granted["id"]).one()
     assert row.entity == "PalmPay"
+
+
+def test_normalize_username_collapses_ime_full_width_space():
+    # A full-width space (U+3000) - easy to type by accident while a Chinese
+    # input method is active - looks near-identical to a normal space but is
+    # a different character, so a naive `==` comparison would treat
+    # "SME　Business" and "SME Business" as two different usernames.
+    assert normalize_username("SME　Business") == "SME Business"
+    assert normalize_username("  SME Business  ") == "SME Business"
+    assert normalize_username("SME Business") == "SME Business"
+
+
+def test_username_with_stray_whitespace_still_logs_in_correctly(db_session):
+    admin = _make_user(db_session, "marcus", role="admin")
+    create_user(CreateUserRequest(username="  SME　Business ", password="pw12345", role="viewer"), db_session, admin)
+
+    # Whatever whitespace variant was typed at creation time, the stored
+    # username is normalized - so logging in with the "clean" form works.
+    result = login(LoginRequest(username="SME Business", password="pw12345"), Response(), db_session)
+    assert result["username"] == "SME Business"
+
+
+def test_reset_password_trims_accidental_trailing_space(db_session):
+    admin = _make_user(db_session, "marcus", role="admin")
+    viewer = _make_user(db_session, "xiajie", password="old-password")
+
+    # Simulates an admin accidentally leaving a trailing space in the
+    # browser prompt() dialog when resetting a password.
+    reset_password(viewer.id, ResetPasswordRequest(new_password="new-password  "), db_session, admin)
+
+    result = login(LoginRequest(username="xiajie", password="new-password"), Response(), db_session)
+    assert result["username"] == "xiajie"
