@@ -32,8 +32,10 @@ async function initShell() {
   if (currentUserRole === 'admin') {
     document.querySelectorAll('.admin-only').forEach((el) => (el.style.display = ''));
   } else {
-    // Viewers never upload/manage permissions - land on trend instead of the
-    // (hidden) upload tab.
+    // Viewers never upload/manage permissions - hide both tabs (the "上传数据"
+    // button has no default inline hide style in the HTML, unlike "用户权限",
+    // so it must be hidden here explicitly) and land on trend instead.
+    document.querySelectorAll('.admin-only').forEach((el) => (el.style.display = 'none'));
     document.querySelectorAll('.tab-btn.active').forEach((b) => b.classList.remove('active'));
     document.querySelectorAll('.tab-panel.active').forEach((p) => p.classList.remove('active'));
     document.querySelector('.tab-btn[data-tab="trend"]').classList.add('active');
@@ -156,6 +158,8 @@ async function deleteBatch(batchId, month) {
 }
 
 function initUploadTab() {
+  if (currentUserRole !== 'admin') return; // viewers never touch the upload router - see routers/upload.py's require_admin
+
   document.getElementById('uploadBtn').addEventListener('click', async () => {
     const month = document.getElementById('uploadMonth').value;
     const salaryType = document.getElementById('uploadSalaryType').value;
