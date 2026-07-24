@@ -10,13 +10,13 @@ engine says so and lists the candidates instead of picking one silently.
 """
 
 import re
-from dataclasses import asdict
 
 from sqlalchemy.orm import Session
 
-from ..compute.attribution import compute_attribution
+from ..compute.attribution import COMPONENT_LABELS, compute_attribution
 from ..compute.trends import get_trend, list_available_months, list_departments, list_entities
 from ..models import User
+from ..security import get_allowed_scope, resolve_scope_filters
 
 ENTITY_NAMES = ["PalmPay", "Flexi", "Jupiter"]
 
@@ -149,9 +149,14 @@ def _fmt_money(n: float) -> str:
     return f"₦{n:,.2f}"
 
 
-def _scope_label(department: str | None, entity: str | None) -> str:
-    parts = [p for p in (entity, department) if p]
-    return "".join(parts) if parts else "全公司"
+def _scope_label(department, entity) -> str:
+    def fmt(v):
+        if isinstance(v, list):
+            return "、".join(v) if v else None
+        return v
+
+    parts = [fmt(p) for p in (entity, department) if fmt(p)]
+    return "+".join(parts) if parts else "全公司"
 
 
 def _format_trend(rows: list[dict], department: str | None, entity: str | None, note: str) -> str:
@@ -174,6 +179,10 @@ def _format_trend(rows: list[dict], department: str | None, entity: str | None, 
     return "\n".join(lines)
 
 
+def _pct_str(pct: float | None) -> str:
+    return f"，约占净变化的 {pct:.1f}%" if pct is not None else ""
+
+
 def _format_attribution(result, department: str | None, entity: str | None, user: User, note: str) -> str:
     label = _scope_label(department, entity)
     r = result
@@ -182,10 +191,10 @@ def _format_attribution(result, department: str | None, entity: str | None, user
         f"  {r.prev_month} 总成本 {_fmt_money(r.prev_total)}，{r.cur_month} 总成本 {_fmt_money(r.cur_total)}",
         f"  净变化：{'+' if r.net_change >= 0 else ''}{_fmt_money(r.net_change)}",
         "",
-        "归因拆解：",
-        f"  1) 新入职 {r.joiners_count} 人，带来成本 +{_fmt_money(r.joiners_cost)}",
-        f"  2) 离职 {r.leavers_count} 人，减少成本 -{_fmt_money(r.leavers_cost)}",
-        f"  3) 留任 {r.stayers_count} 人，成本变化 {'+' if r.stayers_delta >= 0 else ''}{_fmt_money(r.stayers_delta)}",
+        "归因拆解（人数/离职维度）：",
+        f"  1) 新入职 {r.joiners_count} 人，带来成本 +{_fmt_money(r.joiners_cost)}{_pct_str(r.joiners_pct)}",
+        f"  2) 离职 {r.leavers_count} 人，减少成本 -{_fmt_money(r.leavers_cost)}{_pct_str(r.leavers_pct)}",
+        f"  3) 留任 {r.stayers_count} 人，成本变化 {'+' if r.stayers_delta >= 0 else ''}{_fmt_money(r.stayers_delta)}{_pct_str(r.stayers_pct)}",
     ]
     if r.unattributed_delta:
         lines.append(
@@ -196,6 +205,27 @@ def _format_attribution(result, department: str | None, entity: str | None, user
         f"校验：{'三项' if not r.unattributed_delta else '四项'}相加 = {_fmt_money(r.checksum)}"
         f"（{'✓ 与净变化吻合' if r.reconciled else '✗ 与净变化不吻合，数据可能有问题，此结论需要人工复核'}）"
     )
+
+    if r.component_deltas:
+        lines.append("")
+        lines.append(f"留任员工 {_fmt_money(r.stayers_delta)} 的变化，按薪资类目精确拆解（相加严格等于留任总变化）：")
+        for field, amount in r.component_deltas.items():
+            lines.append(f"  {COMPONENT_LABELS.get(field, field)}：{'+' if amount >= 0 else ''}{_fmt_money(amount)}")
+
+    if r.behavior_labels:
+        lines.append("")
+        lines.append("留任员工按变动性质分类（一人可能同时命中多个标签，人数不能直接相加；金额以上面的类目拆解为准，这里仅作叙事参考）：")
+        for lbl in r.behavior_labels:
+            lines.append(
+                f"  {lbl.label}：正式工 {lbl.count_formal} 人 + 合同工 {lbl.count_contract} 人，"
+                f"涉及成本 {'+' if lbl.amount >= 0 else ''}{_fmt_money(lbl.amount)}{_pct_str(lbl.pct_of_net_change)}"
+            )
+
+    if r.anomalies:
+        lines.append("")
+        lines.append("⚠️ 异常信号：")
+        for a in r.anomalies:
+            lines.append(f"  {a}")
 
     if r.top_increases:
         lines.append("")
@@ -216,8 +246,11 @@ def answer_question(db: Session, user: User, question: str) -> dict:
     if not available_months:
         return {"answer": "还没有任何月份的数据入库，先在“上传数据”页传一个月的发薪表并确认入库，再来问我。"}
 
-    departments = list_departments(db)
-    entities = list_entities(db)
+    scope = get_allowed_scope(db, user)
+    departments = list_departments(db, allowed=scope.departments)
+    entities = list_entities(db, allowed=scope.entities)
+    if scope.departments is not None and not departments and not entities:
+        return {"answer": "你的账号目前还没有被分配任何可查看的部门/实体范围，找管理员开通权限后再来问我。"}
     default_year = int(available_months[-1].split("-")[0])
 
     department, dept_candidates, dept_keyword_unmatched = _match_department(question, departments)
@@ -232,9 +265,11 @@ def answer_question(db: Session, user: User, question: str) -> dict:
     if dept_candidates and not department:
         department = dept_candidates[0]
     if dept_keyword_unmatched:
-        note += "（问题里像是提到了某个部门，但没能匹配到现有部门，已按全公司统计；可以试试直接用部门的英文名）"
+        note += "（问题里像是提到了某个部门，但没能匹配到现有部门，已按你的权限范围统计；可以试试直接用部门的英文名）"
     if multiple_entities:
         note += f"（识别到多个实体，暂不支持一次对比多个，本次只按最先提到的 {entity} 统计，如需对比请分开问）"
+
+    department, entity = resolve_scope_filters(scope, department, entity)
 
     unavailable = [m for m in months if m not in available_months]
     months = [m for m in months if m in available_months]

@@ -105,6 +105,115 @@ def build_month2_workbook() -> bytes:
     return buf.getvalue()
 
 
+def build_component_workbook(month: str, employees: list[dict]) -> bytes:
+    """A Formal/Contract workbook carrying the PRD V1.1 salary-component
+    columns (real names, verified against actual data - see
+    ingestion/salary_components.py), for testing category breakdowns and the
+    attribution component decomposition. `employees` is a list of dicts with
+    keys: staff_id, name, role ('formal'|'contract'), department, basic,
+    perf_bonus, commission, overtime, statutory, resigned (optional bool).
+    gross/hr_cost are computed here so the identities always hold exactly -
+    the mismatch case is tested separately in test_salary_components.py.
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    formal_rows = []
+    contract_rows = []
+    for e in employees:
+        gross = e["basic"] + e["perf_bonus"] + e["commission"] + e["overtime"]
+        hr_cost = gross + e["statutory"]
+        if e["role"] == "formal":
+            formal_rows.append(
+                [
+                    e["staff_id"],
+                    e["name"],
+                    "PalmPay",
+                    e["department"],
+                    "P1",
+                    hr_cost,
+                    "2026-01-15" if e.get("resigned") else None,
+                    e["basic"],
+                    e["perf_bonus"],
+                    e["commission"],
+                    e["overtime"],
+                    gross,
+                    e["statutory"],
+                ]
+            )
+        else:
+            contract_rows.append(
+                [
+                    e["staff_id"],
+                    e["name"],
+                    "PalmPay",
+                    e["department"],
+                    "C1",
+                    hr_cost,
+                    "Active",
+                    e["basic"],
+                    e["perf_bonus"],
+                    e["commission"],
+                    e["overtime"],
+                    gross,
+                    e["statutory"],
+                    0,
+                    0,
+                    0,
+                ]
+            )
+
+    if formal_rows:
+        _sheet(
+            wb,
+            "Formal",
+            [
+                "Staff ID",
+                "Staff Name",
+                "Entity",
+                "Department 1",
+                "Job Grade",
+                "HR Cost",
+                "Resign Date",
+                "Actual Monthly Basic Salary",
+                "Performance Bonus",
+                "Commission/Bonus",
+                "Overtime Amount",
+                "Total Gross Salary",
+                "Statutory payments",
+            ],
+            formal_rows,
+        )
+    if contract_rows:
+        _sheet(
+            wb,
+            "Contract - PP",
+            [
+                "Staff ID",
+                "Staff Name",
+                "Entity",
+                "Department 1",
+                "Job Grade",
+                "HR Cost",
+                "Exit Date",
+                "Actual Monthly Basic Salary",
+                "Perfomance bonus",
+                "Commission/Bonus",
+                "Overtime income",
+                "Actual Gross Total Amount",
+                "NSITF",
+                "Pension ER",
+                "ITF",
+                "HMO",
+            ],
+            contract_rows,
+        )
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def build_supplemental_workbook(rows: list[tuple[str, str, str, float]], sheet_name: str = "Backpay") -> bytes:
     """rows: list of (staff_id, staff_name, department1, amount) - a standalone
     bonus/backpay file, deliberately much simpler/looser than the main workbook

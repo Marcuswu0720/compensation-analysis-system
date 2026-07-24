@@ -1,44 +1,51 @@
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..compute.attribution import compute_attribution
+from ..compute.categories import CATEGORY_FIELDS, compare_departments_by_category, get_category_trend, get_cost_composition
 from ..compute.trends import get_trend, list_available_months, list_departments, list_entities
 from ..database import get_db
 from ..models import User
-from ..schemas import AttributionRequest, TrendRequest
-from ..security import get_current_user
+from ..schemas import AttributionRequest, CategoryCompareRequest, CategoryTrendRequest, CompositionRequest, TrendRequest
+from ..security import get_allowed_scope, get_current_user, resolve_department_axis, resolve_scope_filters
 
 router = APIRouter(prefix="/api", tags=["query"])
 
 
 @router.get("/meta")
-def meta(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def meta(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = get_allowed_scope(db, user)
     return {
-        "departments": list_departments(db),
-        "entities": list_entities(db),
+        "departments": list_departments(db, allowed=scope.departments),
+        "entities": list_entities(db, allowed=scope.entities),
         "months": list_available_months(db),
+        "categories": [{"value": k, "label": v} for k, v in CATEGORY_FIELDS.items()],
     }
 
 
 @router.post("/trend")
-def trend(payload: TrendRequest, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def trend(payload: TrendRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = get_allowed_scope(db, user)
+    department, entity = resolve_scope_filters(scope, payload.department, payload.entity)
     months = None
     if payload.start_month and payload.end_month:
         available = list_available_months(db)
         months = [m for m in available if payload.start_month <= m <= payload.end_month]
-    return get_trend(db, months=months, department=payload.department, entity=payload.entity)
+    return get_trend(db, months=months, department=department, entity=entity)
 
 
 @router.post("/attribution")
 def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = get_allowed_scope(db, user)
+    department, entity = resolve_scope_filters(scope, payload.department, payload.entity)
     result = compute_attribution(
         db,
         prev_month=payload.prev_month,
         cur_month=payload.cur_month,
-        department=payload.department,
-        entity=payload.entity,
+        department=department,
+        entity=entity,
     )
     result_dict = asdict(result)
     if user.role != "admin":
@@ -47,3 +54,37 @@ def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user
                 item["name"] = "[无权限查看，仅管理员可见]"
                 item["staff_id"] = "[隐藏]"
     return result_dict
+
+
+@router.post("/category-trend")
+def category_trend(payload: CategoryTrendRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = get_allowed_scope(db, user)
+    department, entity = resolve_scope_filters(scope, payload.department, payload.entity)
+    months = None
+    if payload.start_month and payload.end_month:
+        available = list_available_months(db)
+        months = [m for m in available if payload.start_month <= m <= payload.end_month]
+    try:
+        return get_category_trend(db, category=payload.category, months=months, department=department, entity=entity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/category-compare")
+def category_compare(payload: CategoryCompareRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = get_allowed_scope(db, user)
+    _, entity = resolve_scope_filters(scope, None, payload.entity)
+    allowed_departments = resolve_department_axis(scope)
+    try:
+        return compare_departments_by_category(
+            db, category=payload.category, month=payload.month, entity=entity, allowed_departments=allowed_departments
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/composition")
+def composition(payload: CompositionRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    scope = get_allowed_scope(db, user)
+    department, entity = resolve_scope_filters(scope, payload.department, payload.entity)
+    return get_cost_composition(db, month=payload.month, department=department, entity=entity)

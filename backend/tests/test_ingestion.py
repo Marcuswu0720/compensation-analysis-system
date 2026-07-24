@@ -10,7 +10,7 @@ from .xlsx_fixtures import build_month1_workbook, build_month2_workbook
 
 def _upload_and_confirm(db, month, content):
     batch = stage_upload(db, month=month, file_bytes=content, filename=f"{month}.xlsx", uploaded_by="tester")
-    confirm_upload(db, batch)
+    confirm_upload(db, batch, operator="tester")
     return batch
 
 

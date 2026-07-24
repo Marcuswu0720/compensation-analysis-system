@@ -1,6 +1,6 @@
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
-from app.models import User
+from app.models import User, ViewerPermission
 from app.qa.rule_engine import answer_question
 
 from .xlsx_fixtures import build_month1_workbook, build_month2_workbook
@@ -9,7 +9,7 @@ from .xlsx_fixtures import build_month1_workbook, build_month2_workbook
 def _seed_two_months(db):
     for month, builder in (("2026-01", build_month1_workbook), ("2026-02", build_month2_workbook)):
         batch = stage_upload(db, month=month, file_bytes=builder(), filename=f"{month}.xlsx", uploaded_by="tester")
-        confirm_upload(db, batch)
+        confirm_upload(db, batch, operator="tester")
 
 
 def _admin(db):
@@ -64,10 +64,27 @@ def test_ambiguous_department_asks_for_clarification(db_session):
     assert "全公司" in resp["answer"] or "没有查到" in resp["answer"]
 
 
+def test_viewer_with_no_grants_sees_nothing(db_session):
+    _seed_two_months(db_session)
+    viewer = User(username="xiajie", password_hash="x", role="viewer")
+    db_session.add(viewer)
+    db_session.commit()
+
+    resp = answer_question(db_session, viewer, "公司2月为什么比1月成本高")
+    assert "没有被分配任何可查看的部门" in resp["answer"]
+
+
 def test_viewer_role_redacts_names_in_attribution_reply(db_session):
     _seed_two_months(db_session)
     viewer = User(username="xiajie", password_hash="x", role="viewer")
     db_session.add(viewer)
+    db_session.commit()
+    db_session.add_all(
+        [
+            ViewerPermission(user_id=viewer.id, scope_type="department", scope_value="Sales"),
+            ViewerPermission(user_id=viewer.id, scope_type="department", scope_value="Ops"),
+        ]
+    )
     db_session.commit()
 
     resp = answer_question(db_session, viewer, "公司2月为什么比1月成本高")

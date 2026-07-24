@@ -2,9 +2,11 @@
 
 Each (month, salary_type) slot can have at most one *confirmed* batch at a
 time. Confirming a new batch for a slot that already has one supersedes the
-old one: its rows are deleted (scoped precisely by upload_batch_id, so this
-never touches a different salary_type's data for the same month) and its
-status flips to 'superseded' rather than being silently overwritten.
+old one. Per PRD V1.1 §3.3, nothing that ever became official data is
+hard-deleted: superseding and deleting both just flip `is_deleted` on the old
+rows (scoped precisely by upload_batch_id, so this never touches a different
+salary_type's data for the same month) so query code excludes them, while an
+append-only DataOperationLog records who did what and when.
 """
 
 import json
@@ -13,6 +15,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from ..models import (
+    DataOperationLog,
     DataQualityLog,
     ExitRecord,
     MonthlyBonusSnapshot,
@@ -24,16 +27,27 @@ from .constants import BONUS_MONTH_OFFSET
 from .loader import shift_month
 
 
-def delete_batch_data(db: Session, batch_id: int) -> None:
-    """Removes every row tied to a batch, across all tables it could have written to."""
-    db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.upload_batch_id == batch_id).delete()
-    db.query(MonthlyBonusSnapshot).filter(MonthlyBonusSnapshot.upload_batch_id == batch_id).delete()
-    db.query(ExitRecord).filter(ExitRecord.upload_batch_id == batch_id).delete()
-    db.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.upload_batch_id == batch_id).delete()
+def _soft_delete_batch_rows(db: Session, batch_id: int) -> None:
+    """Marks every data row tied to a batch as deleted without removing it -
+    kept for audit purposes. DataQualityLog entries ARE hard-deleted since
+    they're diagnostic-only, not the "月份数据" the PRD's soft-delete rule
+    protects."""
+    db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.upload_batch_id == batch_id).update(
+        {"is_deleted": True}
+    )
+    db.query(MonthlyBonusSnapshot).filter(MonthlyBonusSnapshot.upload_batch_id == batch_id).update({"is_deleted": True})
+    db.query(ExitRecord).filter(ExitRecord.upload_batch_id == batch_id).update({"is_deleted": True})
+    db.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.upload_batch_id == batch_id).update(
+        {"is_deleted": True}
+    )
     db.query(DataQualityLog).filter(DataQualityLog.upload_batch_id == batch_id).delete()
 
 
-def confirm_upload(db: Session, batch: UploadBatch) -> None:
+def _log_operation(db: Session, operator: str, operation_type: str, target_month: str | None, detail: str) -> None:
+    db.add(DataOperationLog(operator=operator, operation_type=operation_type, target_month=target_month, detail=detail))
+
+
+def confirm_upload(db: Session, batch: UploadBatch, operator: str) -> None:
     if batch.status == "confirmed":
         raise ValueError("该批次已确认，不能重复确认")
 
@@ -50,7 +64,7 @@ def confirm_upload(db: Session, batch: UploadBatch) -> None:
         .all()
     )
     for prior in prior_batches:
-        delete_batch_data(db, prior.id)
+        _soft_delete_batch_rows(db, prior.id)
         prior.status = "superseded"
 
     if batch.salary_type == "base":
@@ -71,6 +85,13 @@ def confirm_upload(db: Session, batch: UploadBatch) -> None:
 
     batch.status = "confirmed"
     batch.confirmed_at = datetime.utcnow()
+
+    op_type = "correct" if prior_batches else "upload"
+    detail = f"{batch.salary_type} 批次 #{batch.id}（{batch.original_filename}）" + (
+        f"，替换了之前的批次 #{[p.id for p in prior_batches]}" if prior_batches else ""
+    )
+    _log_operation(db, operator, op_type, batch.month, detail)
+
     db.commit()
 
 
@@ -87,7 +108,17 @@ def _insert_base(db: Session, batch: UploadBatch, payload: dict) -> None:
                 department1_raw=e["department1_raw"],
                 job_grade=e["job_grade"],
                 hr_cost=e["hr_cost"],
-                total_gross_salary=e["total_gross_salary"],
+                basic_salary_actual=e["basic_salary_actual"],
+                performance_std=e["performance_std"],
+                performance_coefficient=e["performance_coefficient"],
+                performance_bonus=e["performance_bonus"],
+                commission_bonus=e["commission_bonus"],
+                overtime_amount=e["overtime_amount"],
+                other_income=e["other_income"],
+                gross_salary=e["gross_salary"],
+                employer_statutory_cost=e["employer_statutory_cost"],
+                deduction_total=e["deduction_total"],
+                net_pay=e["net_pay"],
                 is_active=e["is_active"],
                 resign_or_exit_date=e["resign_or_exit_date"],
                 source_sheet=e["source_sheet"],
@@ -147,16 +178,19 @@ def _insert_supplemental(db: Session, batch: UploadBatch, payload: dict) -> None
         )
 
 
-def delete_confirmed_batch(db: Session, batch: UploadBatch) -> None:
-    """Hard-deletes a confirmed batch and all the data it wrote."""
+def delete_confirmed_batch(db: Session, batch: UploadBatch, operator: str, reason: str | None = None) -> None:
+    """Soft-deletes a confirmed batch: its rows stop appearing in any query
+    but stay in the database, and the deletion itself is recorded."""
     if batch.status != "confirmed":
         raise ValueError("只能删除已确认入库的批次")
-    delete_batch_data(db, batch.id)
-    db.delete(batch)
+    _soft_delete_batch_rows(db, batch.id)
+    batch.status = "deleted"
+    detail = f"删除 {batch.salary_type} 批次 #{batch.id}（{batch.original_filename}）" + (f"，原因：{reason}" if reason else "")
+    _log_operation(db, operator, "delete", batch.month, detail)
     db.commit()
 
 
-def reassign_month(db: Session, batch: UploadBatch, new_month: str) -> None:
+def reassign_month(db: Session, batch: UploadBatch, new_month: str, operator: str) -> None:
     """Moves every row a confirmed batch wrote over to a different month.
 
     Refuses if the target (new_month, salary_type) slot is already occupied
@@ -183,6 +217,7 @@ def reassign_month(db: Session, batch: UploadBatch, new_month: str) -> None:
     if conflict:
         raise ValueError(f"{new_month} 已经有一个确认过的「{batch.salary_type}」批次（#{conflict.id}），请先删除或改掉那个批次的月份")
 
+    old_month = batch.month
     db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.upload_batch_id == batch.id).update(
         {"month": new_month}
     )
@@ -196,4 +231,5 @@ def reassign_month(db: Session, batch: UploadBatch, new_month: str) -> None:
     db.query(DataQualityLog).filter(DataQualityLog.upload_batch_id == batch.id).update({"month": new_month})
 
     batch.month = new_month
+    _log_operation(db, operator, "correct", new_month, f"批次 #{batch.id} 月份从 {old_month} 改为 {new_month}")
     db.commit()

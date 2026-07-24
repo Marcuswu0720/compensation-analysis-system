@@ -9,11 +9,14 @@ from ..ingestion.commit import confirm_upload, delete_confirmed_batch, reassign_
 from ..ingestion.loader import SALARY_TYPES, stage_upload
 from ..models import User, UploadBatch
 from ..schemas import ReassignMonthRequest
-from ..security import get_current_user, require_admin
+from ..security import require_admin
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+# Per PRD V1.1 §3.1: only the admin uploads/confirms/rejects/deletes/corrects
+# data. Viewers are read-only and never touch this router.
 
 
 @router.post("")
@@ -22,7 +25,7 @@ async def upload_file(
     salary_type: str,
     file: UploadFile,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ):
     if not MONTH_RE.match(month):
         raise HTTPException(status_code=400, detail="month 格式必须为 YYYY-MM")
@@ -39,7 +42,7 @@ async def upload_file(
 
 
 @router.get("")
-def list_batches(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def list_batches(db: Session = Depends(get_db), _: User = Depends(require_admin)):
     batches = db.query(UploadBatch).order_by(UploadBatch.uploaded_at.desc()).limit(50).all()
     return [
         {
@@ -56,23 +59,23 @@ def list_batches(db: Session = Depends(get_db), user: User = Depends(get_current
 
 
 @router.get("/{batch_id}")
-def get_batch(batch_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_batch(batch_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     batch = _get_batch_or_404(db, batch_id)
     return _batch_summary(batch)
 
 
 @router.post("/{batch_id}/confirm")
-def confirm(batch_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def confirm(batch_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     batch = _get_batch_or_404(db, batch_id)
     try:
-        confirm_upload(db, batch)
+        confirm_upload(db, batch, operator=user.username)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return _batch_summary(batch)
 
 
 @router.post("/{batch_id}/reject")
-def reject(batch_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def reject(batch_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     batch = _get_batch_or_404(db, batch_id)
     if batch.status == "confirmed":
         raise HTTPException(status_code=400, detail="该批次已确认，不能撤销，如需撤销请使用删除")
@@ -82,10 +85,10 @@ def reject(batch_id: int, db: Session = Depends(get_db), user: User = Depends(ge
 
 
 @router.delete("/{batch_id}")
-def delete_batch(batch_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def delete_batch(batch_id: int, reason: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     batch = _get_batch_or_404(db, batch_id)
     try:
-        delete_confirmed_batch(db, batch)
+        delete_confirmed_batch(db, batch, operator=user.username, reason=reason)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True}
@@ -96,13 +99,13 @@ def reassign(
     batch_id: int,
     payload: ReassignMonthRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    user: User = Depends(require_admin),
 ):
     if not MONTH_RE.match(payload.new_month):
         raise HTTPException(status_code=400, detail="new_month 格式必须为 YYYY-MM")
     batch = _get_batch_or_404(db, batch_id)
     try:
-        reassign_month(db, batch, payload.new_month)
+        reassign_month(db, batch, payload.new_month, operator=user.username)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return _batch_summary(batch)

@@ -3,30 +3,41 @@
 Mirrors the "各月总人力成本 & 人数" section of attribution_analysis.py, but
 generalized to any department/entity filter and any set of months, and
 backed by the DB instead of a pickle file.
+
+`department`/`entity` accept either a single name or a list of names (used
+when a restricted viewer has no specific selection - see security.py's
+get_allowed_scope) - apply_scope_filter in scope.py handles both forms.
 """
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..models import MonthlyEmployeeSnapshot, SupplementalPaySnapshot
+from .scope import apply_scope_filter
+
+ScopeValue = str | list[str] | None
 
 
 def list_available_months(db: Session) -> list[str]:
-    base_months = {r[0] for r in db.query(MonthlyEmployeeSnapshot.month).distinct().all()}
-    supplemental_months = {r[0] for r in db.query(SupplementalPaySnapshot.month).distinct().all()}
+    base_months = {
+        r[0] for r in db.query(MonthlyEmployeeSnapshot.month).filter(MonthlyEmployeeSnapshot.is_deleted == False).distinct().all()  # noqa: E712
+    }
+    supplemental_months = {
+        r[0] for r in db.query(SupplementalPaySnapshot.month).filter(SupplementalPaySnapshot.is_deleted == False).distinct().all()  # noqa: E712
+    }
     return sorted(base_months | supplemental_months)
 
 
 def _supplemental_by_month(
-    db: Session, months: list[str] | None, department: str | None, entity: str | None
+    db: Session, months: list[str] | None, department: ScopeValue, entity: ScopeValue
 ) -> dict[str, float]:
-    q = db.query(SupplementalPaySnapshot.month, func.sum(SupplementalPaySnapshot.amount))
+    q = db.query(SupplementalPaySnapshot.month, func.sum(SupplementalPaySnapshot.amount)).filter(
+        SupplementalPaySnapshot.is_deleted == False  # noqa: E712
+    )
     if months:
         q = q.filter(SupplementalPaySnapshot.month.in_(months))
-    if department:
-        q = q.filter(SupplementalPaySnapshot.department1 == department)
-    if entity:
-        q = q.filter(SupplementalPaySnapshot.entity == entity)
+    q = apply_scope_filter(q, SupplementalPaySnapshot.department1, department)
+    q = apply_scope_filter(q, SupplementalPaySnapshot.entity, entity)
     q = q.group_by(SupplementalPaySnapshot.month)
     return {month: amount or 0.0 for month, amount in q.all()}
 
@@ -34,8 +45,8 @@ def _supplemental_by_month(
 def get_trend(
     db: Session,
     months: list[str] | None = None,
-    department: str | None = None,
-    entity: str | None = None,
+    department: ScopeValue = None,
+    entity: ScopeValue = None,
 ) -> list[dict]:
     # Headcount/cost here is a "cash flow" measure: everyone who has a payroll
     # record for the month (including someone who resigned mid-month but still
@@ -45,14 +56,12 @@ def get_trend(
         MonthlyEmployeeSnapshot.month,
         func.count(MonthlyEmployeeSnapshot.id).label("headcount"),
         func.sum(MonthlyEmployeeSnapshot.hr_cost).label("total_hr_cost"),
-    )
+    ).filter(MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
 
     if months:
         q = q.filter(MonthlyEmployeeSnapshot.month.in_(months))
-    if department:
-        q = q.filter(MonthlyEmployeeSnapshot.department1 == department)
-    if entity:
-        q = q.filter(MonthlyEmployeeSnapshot.entity == entity)
+    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
+    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
 
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
@@ -82,11 +91,15 @@ def get_trend(
     return results
 
 
-def list_departments(db: Session) -> list[str]:
-    rows = db.query(MonthlyEmployeeSnapshot.department1).distinct().order_by(MonthlyEmployeeSnapshot.department1).all()
+def list_departments(db: Session, allowed: list[str] | None = None) -> list[str]:
+    q = db.query(MonthlyEmployeeSnapshot.department1).filter(MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
+    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, allowed)
+    rows = q.distinct().order_by(MonthlyEmployeeSnapshot.department1).all()
     return [r[0] for r in rows if r[0]]
 
 
-def list_entities(db: Session) -> list[str]:
-    rows = db.query(MonthlyEmployeeSnapshot.entity).distinct().order_by(MonthlyEmployeeSnapshot.entity).all()
+def list_entities(db: Session, allowed: list[str] | None = None) -> list[str]:
+    q = db.query(MonthlyEmployeeSnapshot.entity).filter(MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
+    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, allowed)
+    rows = q.distinct().order_by(MonthlyEmployeeSnapshot.entity).all()
     return [r[0] for r in rows if r[0]]

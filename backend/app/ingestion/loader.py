@@ -8,14 +8,14 @@ endpoint (see routers/upload.py + commit.py).
 
 import io
 import json
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from ..models import DataQualityLog, MonthlyEmployeeSnapshot, UploadBatch
+from ..models import MonthlyEmployeeSnapshot, UploadBatch
 from .constants import BONUS_MONTH_OFFSET, BONUS_SHEET_KEYS, EMPLOYEE_SHEET_KEYS
 from .normalize import NameResolver
 from .parser import get, parse_workbook
+from .salary_components import extract_salary_components
 from .supplemental import parse_supplemental_workbook
 
 SALARY_TYPES = ("base", "bonus", "backpay")
@@ -84,10 +84,12 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
     resolver.prepare("entity", raw_entities)
 
     employees: dict[str, dict] = {}
+    gross_mismatch_count = 0
     for role in EMPLOYEE_SHEET_KEYS:
         sheet_result = parsed.by_role.get(role)
         if not sheet_result:
             continue
+        salary_role = "formal" if role == "formal" else "contract"
         for row in sheet_result.rows:
             sid = get(row, sheet_result.header_map, "staff_id")
             if not sid:
@@ -96,6 +98,9 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
             is_active, status_date = _is_active_employee(role, row, sheet_result.header_map)
             dept_raw = get(row, sheet_result.header_map, "department1")
             entity_raw = get(row, sheet_result.header_map, "entity")
+            components = extract_salary_components(row, salary_role)
+            if components.pop("gross_salary_component_mismatch"):
+                gross_mismatch_count += 1
             employees[sid] = {
                 "staff_id": sid,
                 "staff_name": get(row, sheet_result.header_map, "staff_name"),
@@ -106,10 +111,10 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
                 "department1_raw": dept_raw,
                 "job_grade": get(row, sheet_result.header_map, "job_grade"),
                 "hr_cost": float(get(row, sheet_result.header_map, "hr_cost") or 0),
-                "total_gross_salary": get(row, sheet_result.header_map, "total_gross"),
                 "is_active": is_active,
                 "resign_or_exit_date": status_date,
                 "source_sheet": sheet_result.sheet_name,
+                **components,
             }
 
     bonuses: list[dict] = []
@@ -176,6 +181,18 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
                 "issue_type": "missing_sheet",
                 "issue_detail": "未找到离职名单 sheet（本月可能确实没有维护离职表，请人工确认）",
                 "row_count_affected": 0,
+            }
+        )
+    if gross_mismatch_count:
+        issues.append(
+            {
+                "issue_type": "gross_salary_component_mismatch",
+                "issue_detail": (
+                    f"有 {gross_mismatch_count} 条记录的「底薪+绩效+奖金+加班+其他收入」加总与表里的税前薪资总额对不上"
+                    "（原始表本身的差异，不是解析错误），gross_salary 已按表里现成的值为准，未做任何调整，"
+                    "如需要可以在数据库里按 staff_id 查出这些人核实"
+                ),
+                "row_count_affected": gross_mismatch_count,
             }
         )
     issues.extend(resolver.flush_issues())

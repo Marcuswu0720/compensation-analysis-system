@@ -57,7 +57,11 @@ class CanonicalName(Base):
 
 class MonthlyEmployeeSnapshot(Base):
     __tablename__ = "monthly_employee_snapshot"
-    __table_args__ = (UniqueConstraint("month", "staff_id", name="uq_month_staff"),)
+    # No DB-level unique constraint on (month, staff_id): a soft-deleted row
+    # (is_deleted=True) has to be able to coexist with the active replacement
+    # that superseded it, for the same key. Uniqueness among *active* rows is
+    # guaranteed by ingestion/commit.py always soft-deleting the prior batch
+    # before inserting a new one for the same (month, salary_type) slot.
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     month: Mapped[str] = mapped_column(String(7), nullable=False)
@@ -69,16 +73,33 @@ class MonthlyEmployeeSnapshot(Base):
     department1_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
     job_grade: Mapped[str | None] = mapped_column(String(32), nullable=True)
     hr_cost: Mapped[float] = mapped_column(Float, default=0.0)
-    total_gross_salary: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Salary component breakdown (PRD V1.1 §2) - see ingestion/salary_components.py
+    # for the Formal-vs-Contract column mapping these are extracted from.
+    basic_salary_actual: Mapped[float | None] = mapped_column(Float, nullable=True)
+    performance_std: Mapped[float | None] = mapped_column(Float, nullable=True)
+    performance_coefficient: Mapped[float | None] = mapped_column(Float, nullable=True)
+    performance_bonus: Mapped[float | None] = mapped_column(Float, nullable=True)
+    commission_bonus: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overtime_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    other_income: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gross_salary: Mapped[float | None] = mapped_column(Float, nullable=True)
+    employer_statutory_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    deduction_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_pay: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     resign_or_exit_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_sheet: Mapped[str | None] = mapped_column(String(64), nullable=True)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
+    # Soft-delete flag (PRD V1.1 §3.3): a deleted/superseded batch's rows stay
+    # in the table for audit purposes but are excluded from every query - see
+    # compute/scope.py and ingestion/commit.py.
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class MonthlyBonusSnapshot(Base):
     __tablename__ = "monthly_bonus_snapshot"
-    __table_args__ = (UniqueConstraint("performance_month", "staff_id", name="uq_perf_month_staff"),)
+    # See MonthlyEmployeeSnapshot's comment above - no DB-level unique
+    # constraint, for the same soft-delete-coexistence reason.
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     performance_month: Mapped[str] = mapped_column(String(7), nullable=False)
@@ -92,6 +113,7 @@ class MonthlyBonusSnapshot(Base):
     deduction: Mapped[float] = mapped_column(Float, default=0.0)
     bonus_total: Mapped[float] = mapped_column(Float, default=0.0)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SupplementalPaySnapshot(Base):
@@ -114,6 +136,7 @@ class SupplementalPaySnapshot(Base):
     source_sheet: Mapped[str | None] = mapped_column(String(64), nullable=True)
     matched_base_employee: Mapped[bool] = mapped_column(Boolean, default=False)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ExitRecord(Base):
@@ -130,6 +153,7 @@ class ExitRecord(Base):
     attrition_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     exit_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class DataQualityLog(Base):
@@ -142,3 +166,34 @@ class DataQualityLog(Base):
     issue_type: Mapped[str] = mapped_column(String(64))
     issue_detail: Mapped[str] = mapped_column(Text)
     row_count_affected: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ViewerPermission(Base):
+    """A viewer's visible-data allowlist (PRD V1.1 §3.2). A viewer sees the
+    union of "department1 in their granted departments" OR "entity in their
+    granted entities" - see security.get_allowed_scope. A viewer with zero
+    rows here sees nothing until an admin grants them something, rather than
+    defaulting to full access."""
+
+    __tablename__ = "viewer_permissions"
+    __table_args__ = (UniqueConstraint("user_id", "scope_type", "scope_value", name="uq_user_scope"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'department' | 'entity'
+    scope_value: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class DataOperationLog(Base):
+    """Audit trail for anything that changes official data (PRD V1.1 §3.3),
+    kept even after the batch it refers to is deleted/superseded - this table
+    is append-only, nothing here is ever deleted or edited."""
+
+    __tablename__ = "data_operation_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    operator: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'upload' | 'delete' | 'correct'
+    target_month: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    operation_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
