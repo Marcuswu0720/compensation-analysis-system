@@ -56,10 +56,12 @@ const MENU_ITEMS: MenuDef[] = [
   { key: '/qc/anomalies', labelKey: 'menu.qcAnomalies', icon: <WarningOutlined />, roles: ['QC_TEAM', 'HQ', 'LOCAL_HR'] },
 ];
 
+const KNOWN_NOTIFICATION_TYPES = ['LOCATION_ANOMALY', 'LOCATION_ANOMALY_PRE_WARNING'];
+
 function renderNotificationText(t: (key: string, opts?: Record<string, unknown>) => string, n: { type: string; title: string; message: string; params: Record<string, string | number> | null }) {
   // 已知类型走 i18n + params 按当前语言渲染；未知类型（如未来新增但前端未升级）兜底展示服务端存的原始文案
-  if (n.type === 'LOCATION_ANOMALY' && n.params) {
-    return { title: t('notifications.types.LOCATION_ANOMALY.title'), message: t('notifications.types.LOCATION_ANOMALY.message', n.params) };
+  if (n.params && KNOWN_NOTIFICATION_TYPES.includes(n.type)) {
+    return { title: t(`notifications.types.${n.type}.title`), message: t(`notifications.types.${n.type}.message`, n.params) };
   }
   return { title: n.title, message: n.message };
 }
@@ -68,6 +70,7 @@ function NotificationBell() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['notifications-unread-count'],
     queryFn: notificationsApi.unreadCount,
@@ -82,11 +85,15 @@ function NotificationBell() {
     if (open) queryClient.invalidateQueries({ queryKey: ['notifications'] });
   };
 
-  const handleClickItem = async (id: string, relatedEntityType: string | null) => {
+  const handleClickItem = async (id: string, type: string) => {
     await notificationsApi.markRead(id);
     queryClient.invalidateQueries({ queryKey: ['notifications'] });
     queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
-    if (relatedEntityType === 'LOCATION_CHECKIN_PHOTO') navigate('/qc/anomalies');
+    if (type === 'LOCATION_ANOMALY_PRE_WARNING') {
+      navigate('/clock-in');
+    } else if (type === 'LOCATION_ANOMALY' && user && ['QC_TEAM', 'HQ', 'LOCAL_HR'].includes(user.role)) {
+      navigate('/qc/anomalies');
+    }
   };
 
   const markAllRead = async () => {
@@ -123,7 +130,7 @@ function NotificationBell() {
                 return (
                   <List.Item
                     style={{ cursor: 'pointer', background: n.isRead ? undefined : '#f0f5ff', padding: 8 }}
-                    onClick={() => handleClickItem(n.id, n.relatedEntityType)}
+                    onClick={() => handleClickItem(n.id, n.type)}
                   >
                     <div style={{ width: '100%' }}>
                       <Typography.Text strong={!n.isRead}>{text.title}</Typography.Text>

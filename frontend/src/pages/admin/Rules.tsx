@@ -137,6 +137,9 @@ function RuleTemplateTab() {
           <Form.Item name="photoIntervalThresholdMinutes" label={t('adminRules.photoIntervalThreshold')}>
             <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item name="photoIntervalPreWarnMinutes" label={t('adminRules.photoIntervalPreWarn')} help={t('adminRules.photoIntervalPreWarnHelp')}>
+            <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
           <Form.Item name="requiresBusinessMetric" label={t('adminRules.requiresBusinessMetric')} valuePropName="checked">
             <Switch />
           </Form.Item>

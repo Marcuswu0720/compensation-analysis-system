@@ -344,6 +344,8 @@ export default {
     requiresClockOut: 'Requires clock-out',
     requiresPhoto: 'Requires photo/GPS trail',
     photoIntervalThreshold: 'Photo interval alert threshold (minutes)',
+    photoIntervalPreWarn: 'Pre-timeout reminder (minutes before)',
+    photoIntervalPreWarnHelp: 'Employees get a reminder this many minutes before the interval threshold is reached, so they can check in before it counts as an anomaly.',
     requiresBusinessMetric: 'Requires business metric for attendance',
     businessMetricThreshold: 'Business metric threshold (e.g. merchants deployed)',
     businessMetricSource: 'Business metric source',
@@ -422,6 +424,10 @@ export default {
       LOCATION_ANOMALY: {
         title: 'Location check-in interval anomaly',
         message: '{{name}} had a {{intervalMinutes}}-minute gap between location check-ins, exceeding the {{thresholdMinutes}}-minute threshold. An anomaly record has been created.',
+      },
+      LOCATION_ANOMALY_PRE_WARNING: {
+        title: 'Location check-in due soon',
+        message: 'Please check in again within {{remainingMinutes}} minutes (interval threshold: {{thresholdMinutes}} min) to avoid triggering an anomaly record.',
       },
     },
   },

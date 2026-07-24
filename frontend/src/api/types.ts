@@ -182,6 +182,7 @@ export interface RuleTemplate {
   requiresClockOut: boolean;
   requiresPhoto: boolean;
   photoIntervalThresholdMinutes: number | null;
+  photoIntervalPreWarnMinutes: number | null;
   requiresBusinessMetric: boolean;
   businessMetricThreshold: number | null;
   businessMetricSource: string | null;

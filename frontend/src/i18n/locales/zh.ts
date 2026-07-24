@@ -344,6 +344,8 @@ export default {
     requiresClockOut: '需要下班打卡',
     requiresPhoto: '需要拍照/GPS轨迹',
     photoIntervalThreshold: '照片间隔预警阈值（分钟）',
+    photoIntervalPreWarn: '快超时提前提醒（分钟）',
+    photoIntervalPreWarnHelp: '距间隔阈值还剩这么多分钟时提醒员工尽快打卡，避免生成异常记录。',
     requiresBusinessMetric: '需要业务指标判断出勤',
     businessMetricThreshold: '业务指标阈值（如部署商户数）',
     businessMetricSource: '业务指标来源',
@@ -422,6 +424,10 @@ export default {
       LOCATION_ANOMALY: {
         title: '定位打卡间隔异常',
         message: '{{name}} 定位打卡间隔 {{intervalMinutes}} 分钟，超过阈值 {{thresholdMinutes}} 分钟，已生成异常记录',
+      },
+      LOCATION_ANOMALY_PRE_WARNING: {
+        title: '定位打卡即将超时',
+        message: '请在 {{remainingMinutes}} 分钟内完成下一次定位打卡（间隔阈值 {{thresholdMinutes}} 分钟），避免生成异常记录',
       },
     },
   },

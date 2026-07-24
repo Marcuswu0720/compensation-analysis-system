@@ -16,6 +16,12 @@ export class UpsertRuleTemplateDto {
   @Min(1)
   photoIntervalThresholdMinutes?: number;
 
+  // 间隔快超时前提前提醒的分钟数，如 10（问题反馈 2.4.2）
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  photoIntervalPreWarnMinutes?: number;
+
   @IsBoolean()
   requiresBusinessMetric: boolean;
 
