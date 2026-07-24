@@ -21,6 +21,8 @@ import { LeaveModule } from './leave/leave.module';
 import { OvertimeModule } from './overtime/overtime.module';
 import { ReportsModule } from './reports/reports.module';
 import { HolidaysModule } from './holidays/holidays.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { LocationAnomaliesModule } from './location-anomalies/location-anomalies.module';
 
 @Module({
   imports: [
@@ -41,6 +43,8 @@ import { HolidaysModule } from './holidays/holidays.module';
     OvertimeModule,
     ReportsModule,
     HolidaysModule,
+    NotificationsModule,
+    LocationAnomaliesModule,
   ],
   controllers: [AppController],
   providers: [

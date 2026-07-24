@@ -17,6 +17,7 @@ import ReportsGlobal from './pages/reports/Global';
 import Employees from './pages/admin/Employees';
 import Teams from './pages/admin/Teams';
 import Rules from './pages/admin/Rules';
+import QcAnomalies from './pages/QcAnomalies';
 
 function App() {
   return (
@@ -139,6 +140,14 @@ function App() {
           element={
             <ProtectedRoute roles={['LOCAL_HR']}>
               <Rules />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/qc/anomalies"
+          element={
+            <ProtectedRoute roles={['QC_TEAM', 'HQ', 'LOCAL_HR']}>
+              <QcAnomalies />
             </ProtectedRoute>
           }
         />

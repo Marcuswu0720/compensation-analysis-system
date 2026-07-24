@@ -136,6 +136,17 @@ async function main() {
     },
   });
 
+  await prisma.user.create({
+    data: {
+      employeeNo: 'QC001',
+      name: 'Bola (QC Team)',
+      email: 'qc@example.com',
+      passwordHash,
+      role: Role.QC_TEAM,
+      departmentId: hqDept.id,
+    },
+  });
+
   const localManager = await prisma.user.create({
     data: {
       employeeNo: 'MGR001',
@@ -211,6 +222,7 @@ async function main() {
   console.log('Seed complete. Demo accounts (password: Passw0rd!):');
   console.log('  hq.admin@example.com   (HQ, 只读)');
   console.log('  hr@example.com         (LOCAL_HR)');
+  console.log('  qc@example.com         (QC_TEAM)');
   console.log('  manager@example.com    (LOCAL_MANAGER)');
   console.log('  amaka@example.com      (EMPLOYEE, 办公室打卡)');
   console.log('  emeka@example.com      (EMPLOYEE, 排班打卡)');

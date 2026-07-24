@@ -19,6 +19,7 @@ enum Role {
   LOCAL_MANAGER // 本地小管理者
   LOCAL_HR // 本地 HR / HRIS 团队
   HQ // 总部（只读）
+  QC_TEAM // 质检团队：核查定位打卡异常记录（问题反馈 2.2），不涉及日常审批
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,10 @@ model User {
   auditLogs            AuditLog[]
   createdEvents        SpecialAttendanceEvent[] @relation("EventCreatedBy")
   revokedEvents        SpecialAttendanceEvent[] @relation("EventRevokedBy")
+
+  locationAnomalies         LocationCheckinAnomaly[] @relation("AnomalyUser")
+  reviewedLocationAnomalies LocationCheckinAnomaly[] @relation("AnomalyReviewer")
+  notifications             Notification[]
 }
 
 model RefreshToken {
@@ -319,7 +324,51 @@ model LocationCheckInPhoto {
   isWithinRange       Boolean? // 是否在团队关联的有效打卡范围内；团队未配置 FIXED 范围时为 null（不适用，问题反馈 2.5）
   createdAt           DateTime     @default(now())
 
+  anomaly LocationCheckinAnomaly? @relation("AnomalyPhoto")
+
   @@index([userId, takenAt])
+}
+
+// 定位打卡间隔超阈值的异常记录，交由质检团队核查（问题反馈 2.2）
+model LocationCheckinAnomaly {
+  id               String                @id @default(uuid())
+  photoId          String                @unique
+  photo            LocationCheckInPhoto  @relation("AnomalyPhoto", fields: [photoId], references: [id])
+  userId           String
+  user             User                  @relation("AnomalyUser", fields: [userId], references: [id])
+  intervalMinutes  Int
+  thresholdMinutes Int
+  status           AnomalyReviewStatus   @default(PENDING)
+  reviewNote       String?
+  reviewedById     String?
+  reviewedBy       User?                 @relation("AnomalyReviewer", fields: [reviewedById], references: [id])
+  reviewedAt       DateTime?
+  createdAt        DateTime              @default(now())
+
+  @@index([status])
+  @@index([userId])
+}
+
+enum AnomalyReviewStatus {
+  PENDING // 待核查
+  REVIEWED // 已核查
+}
+
+// 通用站内通知（问题反馈 2.2/2.4：定位打卡异常需通知质检团队/总部/码牌团队本人及上级）
+model Notification {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  type              String // 如 LOCATION_ANOMALY / LOCATION_ANOMALY_PRE_WARNING
+  title             String // 服务端兜底文案（中文），前端按 type+params 走 i18n 渲染，title/message 仅作未知类型时的兜底
+  message           String
+  params            Json? // 供前端 i18n 插值用的结构化数据，如 { name, intervalMinutes, thresholdMinutes }
+  relatedEntityType String?
+  relatedEntityId   String?
+  isRead            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([userId, isRead])
 }
 
 model TeamAttendanceRuleTemplate {
@@ -330,6 +379,7 @@ model TeamAttendanceRuleTemplate {
   requiresClockOut              Boolean              @default(true)
   requiresPhoto                 Boolean              @default(false)
   photoIntervalThresholdMinutes Int?
+  photoIntervalPreWarnMinutes   Int? // 间隔快超时前提前提醒的分钟数，如 10（问题反馈 2.4.2）
   requiresBusinessMetric        Boolean              @default(false)
   businessMetricThreshold       Int?
   businessMetricSource          String? // 待确认：API对接 or 人工录入

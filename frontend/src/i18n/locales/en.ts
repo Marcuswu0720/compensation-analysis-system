@@ -42,6 +42,7 @@ export default {
     LOCAL_MANAGER: 'Local Manager',
     LOCAL_HR: 'Local HR/HRIS',
     HQ: 'HQ (read-only)',
+    QC_TEAM: 'QC Team',
   },
   menu: {
     dashboard: 'Dashboard',
@@ -59,6 +60,7 @@ export default {
     adminEmployees: 'Employee Management',
     adminTeams: 'Department / Team Management',
     adminRules: 'Attendance Rule Configuration',
+    qcAnomalies: 'Anomaly Review',
   },
   login: {
     title: 'Attendance Management System',
@@ -82,6 +84,7 @@ export default {
     applyLeave: 'Submit leave / overtime application',
     regionReport: 'View regional report',
     globalReport: 'View global report',
+    qcAnomalies: 'View location check-in anomalies',
   },
   clockIn: {
     title: 'Clock In/Out',
@@ -399,5 +402,27 @@ export default {
   eventType: {
     EXTREME_WEATHER: 'Extreme Weather',
     EMERGENCY_EVENT: 'Emergency Event',
+  },
+  qcAnomalies: {
+    title: 'Location Check-in Anomaly Review',
+    allStatuses: 'All statuses',
+    pending: 'Pending review',
+    reviewed: 'Reviewed',
+    interval: 'Interval / Threshold',
+    reviewNote: 'Review note',
+    reviewNotePlaceholder: 'Review note (optional)',
+    markReviewed: 'Mark reviewed',
+    reviewSuccess: 'Marked as reviewed',
+  },
+  notifications: {
+    title: 'Notifications',
+    empty: 'No notifications',
+    markAllRead: 'Mark all as read',
+    types: {
+      LOCATION_ANOMALY: {
+        title: 'Location check-in interval anomaly',
+        message: '{{name}} had a {{intervalMinutes}}-minute gap between location check-ins, exceeding the {{thresholdMinutes}}-minute threshold. An anomaly record has been created.',
+      },
+    },
   },
 };

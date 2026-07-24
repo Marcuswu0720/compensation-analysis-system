@@ -1,4 +1,4 @@
-export type Role = 'EMPLOYEE' | 'LOCAL_MANAGER' | 'LOCAL_HR' | 'HQ';
+export type Role = 'EMPLOYEE' | 'LOCAL_MANAGER' | 'LOCAL_HR' | 'HQ' | 'QC_TEAM';
 
 export type AttendanceMode = 'OFFICE' | 'SHIFT' | 'LOCATION';
 
@@ -221,4 +221,34 @@ export interface Holiday {
   date: string;
   name: string;
   isWorkday: boolean;
+}
+
+export type AnomalyReviewStatus = 'PENDING' | 'REVIEWED';
+
+export interface LocationAnomaly {
+  id: string;
+  photoId: string;
+  userId: string;
+  intervalMinutes: number;
+  thresholdMinutes: number;
+  status: AnomalyReviewStatus;
+  reviewNote: string | null;
+  reviewedById: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  user: { id: string; name: string; employeeNo: string; team?: Team };
+  photo: { id: string; photoUrl: string; takenAt: string; gpsLat: number; gpsLng: number };
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  message: string;
+  params: Record<string, string | number> | null;
+  relatedEntityType: string | null;
+  relatedEntityId: string | null;
+  isRead: boolean;
+  createdAt: string;
 }

@@ -3,6 +3,7 @@ import { AttendanceSource, AttendanceStatus, AuditAction, OfficeAssignmentMode, 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { OfficesService } from '../offices/offices.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { combineBusinessDateAndTime, toBusinessDateOnly } from '../common/date-utils';
 
 interface UploadParams {
@@ -37,6 +38,7 @@ export class LocationCheckinService {
     private prisma: PrismaService,
     private audit: AuditService,
     private offices: OfficesService,
+    private notifications: NotificationsService,
   ) {}
 
   // 6.3: 定位照片、记录时间、记录人三者必须一并保存；7.2: 两张照片间隔超阈值触发预警（记入审计日志作为质检介入依据）
@@ -105,17 +107,57 @@ export class LocationCheckinService {
             action: AuditAction.CREATE,
             operatorId: params.userId,
             detail: {
-              note: '两次拍照间隔超过阈值，已通知质检团队介入（通知渠道待确认，见需求文档14.3）',
+              note: '两次拍照间隔超过阈值，已生成异常记录并通知质检团队/总部/本人及上级（问题反馈 2.2/2.4.1）',
               intervalMinutes: Math.round(intervalMinutes),
               thresholdMinutes: ruleTemplate.photoIntervalThresholdMinutes,
               previousPhotoId: previous.id,
             },
           });
+          await this.createAnomalyAndNotify(user, photo.id, Math.round(intervalMinutes), ruleTemplate.photoIntervalThresholdMinutes);
         }
       }
     }
 
     return photo;
+  }
+
+  // 定位打卡间隔超时：生成待核查的异常记录，并通知质检团队（核查处理）+ 总部（知晓/统计）+
+  // 员工本人及其上级（知道自己被标记异常）（问题反馈 2.2/2.4.1）
+  private async createAnomalyAndNotify(
+    user: { id: string; name: string; teamId: string | null },
+    photoId: string,
+    intervalMinutes: number,
+    thresholdMinutes: number,
+  ) {
+    await this.prisma.locationCheckinAnomaly.create({
+      data: { photoId, userId: user.id, intervalMinutes, thresholdMinutes },
+    });
+
+    const team = user.teamId ? await this.prisma.team.findUnique({ where: { id: user.teamId } }) : null;
+    const recipientIds = new Set<string>([user.id]);
+    if (team?.leaderId) recipientIds.add(team.leaderId);
+
+    // title/message 是服务端兜底文案（中文），前端已知 LOCATION_ANOMALY 类型时会改用 i18n + params 按当前语言渲染
+    const params = { name: user.name, intervalMinutes, thresholdMinutes };
+    const message = `${user.name} 定位打卡间隔 ${intervalMinutes} 分钟，超过阈值 ${thresholdMinutes} 分钟，已生成异常记录`;
+    await Promise.all([
+      this.notifications.notifyUsers([...recipientIds], {
+        type: 'LOCATION_ANOMALY',
+        title: '定位打卡间隔异常',
+        message,
+        params,
+        relatedEntityType: 'LOCATION_CHECKIN_PHOTO',
+        relatedEntityId: photoId,
+      }),
+      this.notifications.notifyRoles([Role.QC_TEAM, Role.HQ], {
+        type: 'LOCATION_ANOMALY',
+        title: '定位打卡间隔异常，待核查',
+        message,
+        params,
+        relatedEntityType: 'LOCATION_CHECKIN_PHOTO',
+        relatedEntityId: photoId,
+      }),
+    ]);
   }
 
   async getPhotoBinary(id: string) {

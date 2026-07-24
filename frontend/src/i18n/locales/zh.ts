@@ -42,6 +42,7 @@ export default {
     LOCAL_MANAGER: '本地小管理者',
     LOCAL_HR: '本地HR/HRIS',
     HQ: '总部（只读）',
+    QC_TEAM: '质检团队',
   },
   menu: {
     dashboard: '首页',
@@ -59,6 +60,7 @@ export default {
     adminEmployees: '员工管理',
     adminTeams: '部门/团队管理',
     adminRules: '考勤规则配置',
+    qcAnomalies: '异常核查',
   },
   login: {
     title: '企业考勤管理系统',
@@ -82,6 +84,7 @@ export default {
     applyLeave: '提交请假/加班申请',
     regionReport: '查看本地区报表',
     globalReport: '查看全局报表',
+    qcAnomalies: '查看定位打卡异常核查',
   },
   clockIn: {
     title: '打卡',
@@ -399,5 +402,27 @@ export default {
   eventType: {
     EXTREME_WEATHER: '极端天气',
     EMERGENCY_EVENT: '突发事件',
+  },
+  qcAnomalies: {
+    title: '定位打卡异常核查',
+    allStatuses: '全部状态',
+    pending: '待核查',
+    reviewed: '已核查',
+    interval: '间隔/阈值（分钟）',
+    reviewNote: '核查备注',
+    reviewNotePlaceholder: '核查备注（可选）',
+    markReviewed: '标记已核查',
+    reviewSuccess: '已标记为核查完成',
+  },
+  notifications: {
+    title: '通知',
+    empty: '暂无通知',
+    markAllRead: '全部标记为已读',
+    types: {
+      LOCATION_ANOMALY: {
+        title: '定位打卡间隔异常',
+        message: '{{name}} 定位打卡间隔 {{intervalMinutes}} 分钟，超过阈值 {{thresholdMinutes}} 分钟，已生成异常记录',
+      },
+    },
   },
 };

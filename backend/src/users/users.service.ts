@@ -30,12 +30,12 @@ export class UsersService {
     private audit: AuditService,
   ) {}
 
-  // 除总部（只读、不参与打卡）外，所有角色都必须指定所属团队，否则考勤规则无从判定，
-  // 打卡时只能兜底为"未配置"（见问题反馈 2.2）
+  // 除总部（只读、不参与打卡）和质检团队（跨团队核查异常，不参与打卡）外，
+  // 所有角色都必须指定所属团队，否则考勤规则无从判定，打卡时只能兜底为"未配置"（见问题反馈 2.2）
   private assertTeamAssigned(role: Role | undefined, teamId: string | null | undefined) {
     const effectiveRole = role ?? Role.EMPLOYEE;
-    if (effectiveRole !== Role.HQ && !teamId) {
-      throw new BadRequestException('除总部角色外，必须为员工指定所属团队，否则无法参与考勤规则判定');
+    if (effectiveRole !== Role.HQ && effectiveRole !== Role.QC_TEAM && !teamId) {
+      throw new BadRequestException('除总部/质检团队角色外，必须为员工指定所属团队，否则无法参与考勤规则判定');
     }
   }
 

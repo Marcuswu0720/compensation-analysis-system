@@ -82,6 +82,7 @@ export function useRoleLabel(): Record<Role, string> {
     LOCAL_MANAGER: t('roles.LOCAL_MANAGER'),
     LOCAL_HR: t('roles.LOCAL_HR'),
     HQ: t('roles.HQ'),
+    QC_TEAM: t('roles.QC_TEAM'),
   };
 }
 
