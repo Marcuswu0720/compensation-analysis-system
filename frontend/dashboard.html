@@ -62,8 +62,20 @@
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>历史上传记录</h3>
-      <div id="uploadHistory"></div>
+      <h3>历史上传记录（全部批次）</h3>
+      <div class="row" style="align-items:center;">
+        <div>
+          <label>按状态筛选</label>
+          <select id="historyStatusFilter">
+            <option value="">全部</option>
+            <option value="pending_review">待确认</option>
+            <option value="confirmed">已入库</option>
+            <option value="rejected">已放弃</option>
+            <option value="superseded">已被替换</option>
+          </select>
+        </div>
+      </div>
+      <div id="uploadHistory" style="margin-top:8px;"></div>
     </div>
   </div>
 

@@ -42,8 +42,22 @@ async def upload_file(
 
 
 @router.get("")
-def list_batches(db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    batches = db.query(UploadBatch).order_by(UploadBatch.uploaded_at.desc()).limit(50).all()
+def list_batches(
+    status: str | None = None,
+    salary_type: str | None = None,
+    month: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    query = db.query(UploadBatch)
+    if status:
+        query = query.filter(UploadBatch.status == status)
+    if salary_type:
+        query = query.filter(UploadBatch.salary_type == salary_type)
+    if month:
+        query = query.filter(UploadBatch.month == month)
+    # 数据管理页面需要看到全部批次，不只是最近的一小部分，所以这里不做 limit。
+    batches = query.order_by(UploadBatch.uploaded_at.desc()).all()
     return [
         {
             "id": b.id,

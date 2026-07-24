@@ -89,7 +89,9 @@ function renderBatch(batch) {
 }
 
 async function loadUploadHistory() {
-  const list = await apiJson('/api/upload');
+  const statusFilter = document.getElementById('historyStatusFilter')?.value || '';
+  const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+  const list = await apiJson(`/api/upload${qs}`);
   const el = document.getElementById('uploadHistory');
   if (list.length === 0) {
     el.innerHTML = '<div class="muted">暂无上传记录</div>';
@@ -103,6 +105,9 @@ async function loadUploadHistory() {
         <span>${b.month} · ${SALARY_TYPE_LABEL[b.salary_type] || b.salary_type} · ${b.original_filename} · 上传人 ${b.uploaded_by} · ${new Date(b.uploaded_at).toLocaleString('zh-CN')}</span>
         <span>
           <span class="badge ${b.status}">${STATUS_LABEL[b.status] || b.status}</span>
+          ${isAdmin && b.status === 'pending_review' ? `
+            <button class="secondary" style="padding:2px 8px;font-size:12px;margin-left:6px;" onclick="reopenBatch(${b.id})">查看/处理</button>
+          ` : ''}
           ${isAdmin && b.status === 'confirmed' ? `
             <button class="secondary" style="padding:2px 8px;font-size:12px;margin-left:6px;" onclick="reassignBatchMonth(${b.id}, '${b.month}')">改月份</button>
             <button class="danger" style="padding:2px 8px;font-size:12px;margin-left:4px;" onclick="deleteBatch(${b.id}, '${b.month}')">删除</button>
@@ -111,6 +116,16 @@ async function loadUploadHistory() {
       </div>`
     )
     .join('');
+}
+
+async function reopenBatch(batchId) {
+  try {
+    const batch = await apiJson(`/api/upload/${batchId}`);
+    renderBatch(batch);
+    document.getElementById('reviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    alert('打开批次失败：' + e.message);
+  }
 }
 
 async function reassignBatchMonth(batchId, currentMonth) {
@@ -189,6 +204,8 @@ function initUploadTab() {
       errEl.textContent = e.message;
     }
   });
+
+  document.getElementById('historyStatusFilter').addEventListener('change', loadUploadHistory);
 
   loadUploadHistory();
 }
