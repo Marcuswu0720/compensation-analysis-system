@@ -23,6 +23,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="viewer")  # admin | viewer
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Account-level disable (PRD V1.2 §3.1): a disabled account can't log in and
+    # loses access mid-session, but the row (and its operation-log history) is
+    # kept forever - never physically deleted.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class UploadBatch(Base):
@@ -169,19 +173,38 @@ class DataQualityLog(Base):
 
 
 class ViewerPermission(Base):
-    """A viewer's visible-data allowlist (PRD V1.1 §3.2). A viewer sees the
-    union of "department1 in their granted departments" OR "entity in their
-    granted entities" - see security.get_allowed_scope. A viewer with zero
-    rows here sees nothing until an admin grants them something, rather than
-    defaulting to full access."""
+    """A viewer's visible-data allowlist (PRD V1.2 §1 - supersedes the V1.1
+    department/entity-as-independent-axes design). Each row is a
+    self-contained, already-AND'd rule:
+      - scope_type='entity': the WHOLE entity is visible (every department
+        under it), `department1` is NULL.
+      - scope_type='entity_department': only that one (entity, department1)
+        pair is visible.
+    A viewer's visible data is the UNION of all their is_active=true rules -
+    see security.get_allowed_scope / compute/scope.py's apply_permission_scope.
+    This closes the V1.1 bug where granting entity=Flexi + department=Credit
+    Business independently (two separate axis-filters ANDed/ORed at query
+    time) could also expose a same-named department in a different entity;
+    here department1 only ever gets compared to rows that also match that
+    exact rule's entity, never in isolation.
+    A viewer with zero active rows sees nothing until an admin grants them
+    something, rather than defaulting to full access.
+    Revoking a rule sets is_active=False (+ revoked_by/revoked_time) instead
+    of deleting the row, so "what could this account see, and when" stays
+    fully reconstructable for compliance/audit purposes (PRD V1.2 §3.2)."""
 
     __tablename__ = "viewer_permissions"
-    __table_args__ = (UniqueConstraint("user_id", "scope_type", "scope_value", name="uq_user_scope"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'department' | 'entity'
-    scope_value: Mapped[str] = mapped_column(String(255), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(24), nullable=False)  # 'entity' | 'entity_department'
+    entity: Mapped[str] = mapped_column(String(64), nullable=False)
+    department1: Mapped[str | None] = mapped_column(String(255), nullable=True)  # set iff scope_type='entity_department'
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    granted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    granted_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    revoked_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    revoked_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DataOperationLog(Base):

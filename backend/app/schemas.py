@@ -55,5 +55,14 @@ class CompositionRequest(BaseModel):
 
 
 class GrantPermissionRequest(BaseModel):
-    scope_type: str  # 'department' | 'entity'
-    scope_value: str
+    scope_type: str  # 'entity' | 'entity_department'
+    entity: str
+    department1: str | None = None  # required iff scope_type == 'entity_department'
+
+
+class SetUserActiveRequest(BaseModel):
+    is_active: bool
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str

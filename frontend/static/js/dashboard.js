@@ -507,20 +507,70 @@ function initChatTab() {
 }
 
 // ---------- permissions tab (admin only) ----------
+let entityDepartmentMap = {};
+
 async function loadUserList() {
   const users = await apiJson('/api/auth/users');
   const select = document.getElementById('permUserSelect');
   const current = select.value;
   select.innerHTML = users.map((u) => `<option value="${u.id}">${u.username}（${u.role}）</option>`).join('');
   if (users.some((u) => String(u.id) === current)) select.value = current;
+
+  document.getElementById('userListTable').innerHTML = users
+    .map(
+      (u) => `
+      <tr>
+        <td>${u.username}</td>
+        <td>${u.role === 'admin' ? '管理员' : '只读'}</td>
+        <td><span class="badge ${u.is_active ? 'confirmed' : 'rejected'}">${u.is_active ? '启用' : '已禁用'}</span></td>
+        <td>
+          <button class="secondary" style="padding:2px 8px;font-size:12px;" onclick="resetUserPassword(${u.id}, '${u.username}')">重置密码</button>
+          <button class="${u.is_active ? 'danger' : 'secondary'}" style="padding:2px 8px;font-size:12px;margin-left:4px;" onclick="toggleUserActive(${u.id}, ${!u.is_active}, '${u.username}')">${u.is_active ? '禁用' : '启用'}</button>
+        </td>
+      </tr>`
+    )
+    .join('');
   return users;
 }
 
-async function loadPermScopeValues() {
-  const meta = await apiJson('/api/meta');
-  const type = document.getElementById('permScopeType').value;
-  const values = type === 'department' ? meta.departments : meta.entities;
-  document.getElementById('permScopeValue').innerHTML = values.map((v) => `<option value="${v}">${v}</option>`).join('');
+async function resetUserPassword(userId, username) {
+  const newPassword = prompt(`为账号「${username}」设置新密码：`);
+  if (!newPassword) return;
+  try {
+    await apiPost(`/api/auth/users/${userId}/reset-password`, { new_password: newPassword });
+    alert('密码已重置');
+  } catch (e) {
+    alert('重置失败：' + e.message);
+  }
+}
+
+async function toggleUserActive(userId, nextActive, username) {
+  if (!nextActive && !confirm(`确定要禁用账号「${username}」吗？禁用后该账号无法登录（历史记录会保留）。`)) return;
+  try {
+    await apiPost(`/api/auth/users/${userId}/active`, { is_active: nextActive });
+    await loadUserList();
+  } catch (e) {
+    alert('操作失败：' + e.message);
+  }
+}
+
+async function loadEntityDepartments() {
+  entityDepartmentMap = await apiJson('/api/auth/entity-departments');
+  const entitySelect = document.getElementById('permEntitySelect');
+  const entities = Object.keys(entityDepartmentMap);
+  entitySelect.innerHTML = entities.map((e) => `<option value="${e}">${e}</option>`).join('');
+  updatePermDepartmentOptions();
+}
+
+function updatePermDepartmentOptions() {
+  const entity = document.getElementById('permEntitySelect').value;
+  const departments = entityDepartmentMap[entity] || [];
+  document.getElementById('permDepartmentSelect').innerHTML = departments.map((d) => `<option value="${d}">${d}</option>`).join('');
+}
+
+function updatePermScopeTypeUI() {
+  const isEntityDept = document.getElementById('permScopeType').value === 'entity_department';
+  document.getElementById('permDepartmentWrap').style.display = isEntityDept ? '' : 'none';
 }
 
 async function loadCurrentPermissions() {
@@ -529,23 +579,31 @@ async function loadCurrentPermissions() {
     document.getElementById('permCurrentList').innerHTML = '';
     return;
   }
-  const grants = await apiJson(`/api/auth/users/${userId}/permissions`);
-  const typeLabel = { department: '部门', entity: '实体' };
+  const includeRevoked = document.getElementById('permShowRevoked').checked;
+  const grants = await apiJson(`/api/auth/users/${userId}/permissions?include_revoked=${includeRevoked}`);
+  const typeLabel = { entity: '整体实体', entity_department: '实体+部门' };
   document.getElementById('permCurrentList').innerHTML = grants.length
     ? grants
         .map(
           (g) => `
-      <tr>
+      <tr${g.is_active ? '' : ' style="opacity:0.55;"'}>
         <td>${typeLabel[g.scope_type] || g.scope_type}</td>
-        <td>${g.scope_value}</td>
-        <td><button class="danger" style="padding:2px 8px;font-size:12px;" onclick="revokePermission(${userId}, ${g.id})">撤销</button></td>
+        <td>${g.entity}</td>
+        <td>${g.department1 || '<span class="muted">（全部）</span>'}</td>
+        <td>${g.is_active ? '<span class="badge confirmed">生效中</span>' : '<span class="badge rejected">已撤销</span>'}</td>
+        <td class="muted" style="font-size:12px;">
+          ${g.granted_by || '-'} · ${new Date(g.granted_time).toLocaleString('zh-CN')}
+          ${g.revoked_by ? `<br>撤销：${g.revoked_by} · ${new Date(g.revoked_time).toLocaleString('zh-CN')}` : ''}
+        </td>
+        <td>${g.is_active ? `<button class="danger" style="padding:2px 8px;font-size:12px;" onclick="revokePermission(${userId}, ${g.id})">撤销</button>` : ''}</td>
       </tr>`
         )
         .join('')
-    : '<tr><td colspan="3" class="muted">暂无授权（该账号目前看不到任何数据）</td></tr>';
+    : '<tr><td colspan="6" class="muted">暂无授权（该账号目前看不到任何数据）</td></tr>';
 }
 
 async function revokePermission(userId, grantId) {
+  if (!confirm('确定要撤销这条授权规则吗？')) return;
   await apiFetch(`/api/auth/users/${userId}/permissions/${grantId}`, { method: 'DELETE' });
   await loadCurrentPermissions();
 }
@@ -586,28 +644,37 @@ function initPermissionsTab() {
     }
   });
 
-  document.getElementById('permScopeType').addEventListener('change', loadPermScopeValues);
+  document.getElementById('permScopeType').addEventListener('change', updatePermScopeTypeUI);
+  document.getElementById('permEntitySelect').addEventListener('change', updatePermDepartmentOptions);
   document.getElementById('permUserSelect').addEventListener('change', loadCurrentPermissions);
+  document.getElementById('permShowRevoked').addEventListener('change', loadCurrentPermissions);
+  updatePermScopeTypeUI();
 
   document.getElementById('grantPermBtn').addEventListener('click', async () => {
     const userId = document.getElementById('permUserSelect').value;
     if (!userId) return;
-    await apiPost(`/api/auth/users/${userId}/permissions`, {
-      scope_type: document.getElementById('permScopeType').value,
-      scope_value: document.getElementById('permScopeValue').value,
-    });
-    await loadCurrentPermissions();
+    const scopeType = document.getElementById('permScopeType').value;
+    const payload = { scope_type: scopeType, entity: document.getElementById('permEntitySelect').value };
+    if (scopeType === 'entity_department') {
+      payload.department1 = document.getElementById('permDepartmentSelect').value;
+    }
+    try {
+      await apiPost(`/api/auth/users/${userId}/permissions`, payload);
+      await loadCurrentPermissions();
+    } catch (e) {
+      alert('授权失败：' + e.message);
+    }
   });
 
   document.querySelector('.tab-btn[data-tab="permissions"]').addEventListener('click', async () => {
     await loadUserList();
-    await loadPermScopeValues();
+    await loadEntityDepartments();
     await loadCurrentPermissions();
     await loadOperationLog();
   });
 
   loadUserList();
-  loadPermScopeValues();
+  loadEntityDepartments();
 }
 
 (async function main() {

@@ -81,8 +81,8 @@ def test_viewer_role_redacts_names_in_attribution_reply(db_session):
     db_session.commit()
     db_session.add_all(
         [
-            ViewerPermission(user_id=viewer.id, scope_type="department", scope_value="Sales"),
-            ViewerPermission(user_id=viewer.id, scope_type="department", scope_value="Ops"),
+            ViewerPermission(user_id=viewer.id, scope_type="entity", entity="PalmPay", granted_by="tester"),
+            ViewerPermission(user_id=viewer.id, scope_type="entity", entity="Flexi", granted_by="tester"),
         ]
     )
     db_session.commit()

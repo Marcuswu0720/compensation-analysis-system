@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from ..models import ExitRecord, MonthlyEmployeeSnapshot, SupplementalPaySnapshot
-from .scope import apply_scope_filter
+from .scope import ScopeRule, apply_permission_scope, apply_scope_filter
 
 ScopeValue = str | list[str] | None
 
@@ -119,7 +119,11 @@ class AttributionResult:
 
 
 def _fetch_scope(
-    db: Session, month: str, department: ScopeValue, entity: ScopeValue
+    db: Session,
+    month: str,
+    department: ScopeValue,
+    entity: ScopeValue,
+    scope_rules: list[ScopeRule] | None,
 ) -> tuple[dict[str, _ScopedEmployee], float]:
     # Same "everyone with a payroll record that month" scope as get_trend - see
     # the comment there. A staff_id present in month M but absent in month M+1
@@ -129,6 +133,7 @@ def _fetch_scope(
     )
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
+    q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     scoped = {
         row.staff_id: _ScopedEmployee(
             staff_id=row.staff_id,
@@ -151,6 +156,7 @@ def _fetch_scope(
     )
     supq = apply_scope_filter(supq, SupplementalPaySnapshot.department1, department)
     supq = apply_scope_filter(supq, SupplementalPaySnapshot.entity, entity)
+    supq = apply_permission_scope(supq, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
 
     unattributed = 0.0
     for row in supq.all():
@@ -230,10 +236,11 @@ def compute_attribution(
     cur_month: str,
     department: ScopeValue = None,
     entity: ScopeValue = None,
+    scope_rules: list[ScopeRule] | None = None,
     top_n: int = 5,
 ) -> AttributionResult:
-    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity)
-    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity)
+    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity, scope_rules)
+    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity, scope_rules)
 
     prev_ids = set(prev_emps.keys())
     cur_ids = set(cur_emps.keys())

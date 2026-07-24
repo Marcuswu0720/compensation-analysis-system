@@ -263,6 +263,14 @@
     </div>
 
     <div class="card" style="margin-top:16px;">
+      <h3>账号列表</h3>
+      <table>
+        <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th></th></tr></thead>
+        <tbody id="userListTable"></tbody>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
       <h3>查阅权限分配</h3>
       <div class="row">
         <div>
@@ -270,23 +278,34 @@
           <select id="permUserSelect"></select>
         </div>
         <div>
-          <label>类型</label>
+          <label>授权类型</label>
           <select id="permScopeType">
-            <option value="department">部门</option>
-            <option value="entity">实体</option>
+            <option value="entity">整体实体</option>
+            <option value="entity_department">实体下的特定部门</option>
           </select>
         </div>
         <div>
-          <label>范围值</label>
-          <select id="permScopeValue"></select>
+          <label>实体</label>
+          <select id="permEntitySelect"></select>
+        </div>
+        <div id="permDepartmentWrap">
+          <label>部门</label>
+          <select id="permDepartmentSelect"></select>
         </div>
         <div style="flex:0;">
           <button id="grantPermBtn">授予</button>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px;">viewer 账号能看到"部门在授权列表里"或"实体在授权列表里"的数据；两类都没授权时，什么都看不到。admin 账号不受此限制。</div>
-      <table style="margin-top:12px;">
-        <thead><tr><th>类型</th><th>范围值</th><th></th></tr></thead>
+      <div class="muted" style="margin-top:8px;">
+        每条授权规则本身就是一个完整范围："整体实体"授予该实体下全部部门；"实体下的特定部门"只授予那一个
+        实体+部门的组合，不会连带其他实体下的同名部门。一个账号可以有多条规则，规则之间取并集。
+        没有任何规则的账号什么都看不到。admin 账号不受此限制。
+      </div>
+      <label style="margin-top:10px;display:inline-flex;align-items:center;gap:6px;font-weight:normal;">
+        <input type="checkbox" id="permShowRevoked"> 显示已撤销的规则（审计追溯用）
+      </label>
+      <table style="margin-top:8px;">
+        <thead><tr><th>类型</th><th>实体</th><th>部门</th><th>状态</th><th>授权人/时间</th><th></th></tr></thead>
         <tbody id="permCurrentList"></tbody>
       </table>
     </div>

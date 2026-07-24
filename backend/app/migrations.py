@@ -8,10 +8,12 @@ Runs once at startup, after create_all() has had a chance to create any
 brand-new tables.
 """
 
+from datetime import datetime
+
 from sqlalchemy import MetaData, Table, inspect, text
 from sqlalchemy.engine import Engine
 
-from .models import MonthlyBonusSnapshot, MonthlyEmployeeSnapshot
+from .models import MonthlyBonusSnapshot, MonthlyEmployeeSnapshot, ViewerPermission
 
 
 SALARY_COMPONENT_COLUMNS = [
@@ -37,6 +39,12 @@ def run_migrations(engine: Engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE upload_batches ADD COLUMN salary_type VARCHAR(16) NOT NULL DEFAULT 'base'"))
 
+    if "users" in inspector.get_table_names():
+        columns = {c["name"] for c in inspector.get_columns("users")}
+        if "is_active" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+
     if "monthly_employee_snapshot" in inspector.get_table_names():
         columns = {c["name"] for c in inspector.get_columns("monthly_employee_snapshot")}
         with engine.begin() as conn:
@@ -61,6 +69,8 @@ def run_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
     _drop_unique_constraint_via_rebuild(engine, inspector, "monthly_employee_snapshot", MonthlyEmployeeSnapshot)
     _drop_unique_constraint_via_rebuild(engine, inspector, "monthly_bonus_snapshot", MonthlyBonusSnapshot)
+
+    _migrate_viewer_permissions_to_entity_rules(engine, inspector)
 
 
 def _drop_unique_constraint_via_rebuild(engine: Engine, inspector, table_name: str, model) -> None:
@@ -89,3 +99,46 @@ def _drop_unique_constraint_via_rebuild(engine: Engine, inspector, table_name: s
         conn.execute(text(f"INSERT INTO {temp_name} ({col_names}) SELECT {col_names} FROM {table_name}"))
         conn.execute(text(f"DROP TABLE {table_name}"))
         conn.execute(text(f"ALTER TABLE {temp_name} RENAME TO {table_name}"))
+
+
+def _migrate_viewer_permissions_to_entity_rules(engine: Engine, inspector) -> None:
+    """PRD V1.2 §1: viewer_permissions moves from independent department/entity
+    axes (scope_type + scope_value) to self-contained rules (scope_type +
+    entity [+ department1]) - see models.ViewerPermission's docstring for why
+    the old shape was a leak risk. create_all() already gives a brand-new
+    database the new schema directly, so this only fires for a database that
+    still has the old columns.
+
+    Old scope_type='entity' rows map 1:1 onto the new shape (entity=
+    scope_value, department1=NULL) and are carried over. Old scope_type=
+    'department' rows have no entity attached at all, so there is no safe way
+    to re-express them as an (entity[, department]) rule - that ambiguity is
+    exactly the gap V1.2 closes - so those grants are dropped rather than
+    guessed at; an admin needs to re-grant them under the new, more precise
+    model via the 用户权限 page.
+    """
+    if "viewer_permissions" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("viewer_permissions")}
+    if "entity" in columns and "granted_time" in columns:
+        return  # already on the new schema
+
+    with engine.begin() as conn:
+        old_rows = conn.execute(text("SELECT user_id, scope_type, scope_value FROM viewer_permissions")).fetchall()
+        conn.execute(text("DROP TABLE viewer_permissions"))
+
+    ViewerPermission.__table__.create(engine)
+
+    carried_over = [r for r in old_rows if r.scope_type == "entity"]
+    if carried_over:
+        now = datetime.utcnow().isoformat(sep=" ")
+        with engine.begin() as conn:
+            for row in carried_over:
+                conn.execute(
+                    text(
+                        "INSERT INTO viewer_permissions "
+                        "(user_id, scope_type, entity, department1, is_active, granted_by, granted_time) "
+                        "VALUES (:user_id, 'entity', :entity, NULL, 1, :granted_by, :granted_time)"
+                    ),
+                    {"user_id": row.user_id, "entity": row.scope_value, "granted_by": "migration_v1.2", "granted_time": now},
+                )

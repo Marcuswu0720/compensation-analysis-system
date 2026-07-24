@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, Request, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
+from .compute.scope import ScopeRule
 from .config import settings
 from .database import get_db
 from .models import User, ViewerPermission
@@ -42,6 +43,11 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+    if not user.is_active:
+        # PRD V1.2 §3.1: disabling an account must take effect immediately,
+        # not just block the next login - an already-open session is cut off
+        # here on its very next request.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号已被禁用，请联系管理员")
     return user
 
 
@@ -53,65 +59,49 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 
 @dataclass
 class AllowedScope:
-    """A viewer's visible-data allowlist. `None` on either field means
-    unrestricted (always true for admin); an empty list means "no grants of
-    this type" and is treated as no additional restriction on that axis,
-    UNLESS the viewer has zero grants of both types at all - a freshly
-    created viewer sees nothing until an admin grants them something, rather
-    than defaulting to full access (see resolve_scope_filters)."""
+    """A viewer's visible-data allowlist (PRD V1.2 §1). `rules is None` means
+    unrestricted (always true for admin). Otherwise it's the list of that
+    viewer's active grant rules - each already a self-contained (entity[,
+    department]) pair - and their visible data is the UNION of those rules
+    (see compute/scope.py's apply_permission_scope, which does the actual
+    query-level filtering). An empty list means zero grants: sees nothing,
+    not everything."""
 
-    departments: list[str] | None
-    entities: list[str] | None
-
-
-NO_ACCESS_SENTINEL = ["__no_department_or_entity_granted__"]
+    rules: list[ScopeRule] | None
 
 
 def get_allowed_scope(db: Session, user: User) -> AllowedScope:
     if user.role == "admin":
-        return AllowedScope(departments=None, entities=None)
-    grants = db.query(ViewerPermission).filter(ViewerPermission.user_id == user.id).all()
-    departments = [g.scope_value for g in grants if g.scope_type == "department"]
-    entities = [g.scope_value for g in grants if g.scope_type == "entity"]
-    return AllowedScope(departments=departments, entities=entities)
+        return AllowedScope(rules=None)
+    grants = (
+        db.query(ViewerPermission)
+        .filter(ViewerPermission.user_id == user.id, ViewerPermission.is_active == True)  # noqa: E712
+        .all()
+    )
+    return AllowedScope(rules=[ScopeRule(entity=g.entity, department1=g.department1) for g in grants])
 
 
-def resolve_scope_filters(
+def resolve_requested_filters(
     scope: AllowedScope, requested_department: str | None, requested_entity: str | None
-) -> tuple[str | list[str] | None, str | list[str] | None]:
-    """Turns a viewer's allowlist + whatever they asked for into the actual
-    department/entity filter values to pass into compute/*.py. Raises 403 if
-    they explicitly asked for something outside their grants."""
-    if scope.departments is None:  # admin - unrestricted
+) -> tuple[str | None, str | None]:
+    """Validates whatever the caller explicitly asked to view (a specific
+    department and/or entity picked in the UI) against their granted rules,
+    raising a clear 403 for a request that's obviously outside every rule.
+    This is a UX nicety, not the security boundary itself - the real
+    enforcement is apply_permission_scope at the query layer, which every
+    compute/*.py call site also applies with `scope.rules`, so even a
+    request that slips past this check can never read outside the granted
+    rules (it would just come back empty)."""
+    if scope.rules is None:  # admin - unrestricted
         return requested_department, requested_entity
 
-    if not scope.departments and not scope.entities:
-        # No grants of either type yet - see nothing, not everything.
-        return NO_ACCESS_SENTINEL, requested_entity
+    if requested_entity and requested_entity not in {r.entity for r in scope.rules}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"无权查看「{requested_entity}」实体的数据")
 
     if requested_department:
-        if requested_department not in scope.departments:
+        explicit_departments = {r.department1 for r in scope.rules if r.department1}
+        has_entity_wide_rule = any(r.department1 is None for r in scope.rules)
+        if requested_department not in explicit_departments and not has_entity_wide_rule:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"无权查看「{requested_department}」部门的数据")
-        department_filter: str | list[str] | None = requested_department
-    else:
-        department_filter = scope.departments or None
 
-    if requested_entity:
-        if requested_entity not in scope.entities:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"无权查看「{requested_entity}」实体的数据")
-        entity_filter: str | list[str] | None = requested_entity
-    else:
-        entity_filter = scope.entities or None
-
-    return department_filter, entity_filter
-
-
-def resolve_department_axis(scope: AllowedScope) -> list[str] | None:
-    """For endpoints that compare *across* departments (so a single
-    department/entity filter doesn't apply) - the same empty-means-
-    unrestricted-on-this-axis rule as resolve_scope_filters, standalone."""
-    if scope.departments is None:  # admin
-        return None
-    if not scope.departments and not scope.entities:
-        return NO_ACCESS_SENTINEL
-    return scope.departments or None
+    return requested_department, requested_entity

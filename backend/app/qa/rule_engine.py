@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from ..compute.attribution import COMPONENT_LABELS, compute_attribution
 from ..compute.trends import get_trend, list_available_months, list_departments, list_entities
 from ..models import User
-from ..security import get_allowed_scope, resolve_scope_filters
+from ..security import get_allowed_scope, resolve_requested_filters
 
 ENTITY_NAMES = ["PalmPay", "Flexi", "Jupiter"]
 
@@ -247,9 +247,9 @@ def answer_question(db: Session, user: User, question: str) -> dict:
         return {"answer": "还没有任何月份的数据入库，先在“上传数据”页传一个月的发薪表并确认入库，再来问我。"}
 
     scope = get_allowed_scope(db, user)
-    departments = list_departments(db, allowed=scope.departments)
-    entities = list_entities(db, allowed=scope.entities)
-    if scope.departments is not None and not departments and not entities:
+    departments = list_departments(db, scope_rules=scope.rules)
+    entities = list_entities(db, scope_rules=scope.rules)
+    if scope.rules is not None and not scope.rules:
         return {"answer": "你的账号目前还没有被分配任何可查看的部门/实体范围，找管理员开通权限后再来问我。"}
     default_year = int(available_months[-1].split("-")[0])
 
@@ -269,7 +269,7 @@ def answer_question(db: Session, user: User, question: str) -> dict:
     if multiple_entities:
         note += f"（识别到多个实体，暂不支持一次对比多个，本次只按最先提到的 {entity} 统计，如需对比请分开问）"
 
-    department, entity = resolve_scope_filters(scope, department, entity)
+    department, entity = resolve_requested_filters(scope, department, entity)
 
     unavailable = [m for m in months if m not in available_months]
     months = [m for m in months if m in available_months]
@@ -282,7 +282,7 @@ def answer_question(db: Session, user: User, question: str) -> dict:
         prev_month, cur_month = min(months), max(months)
         if len(months) > 2:
             note += f"（识别到多个月份，已取最早的 {prev_month} 和最晚的 {cur_month} 做归因对比）"
-        result = compute_attribution(db, prev_month, cur_month, department=department, entity=entity)
+        result = compute_attribution(db, prev_month, cur_month, department=department, entity=entity, scope_rules=scope.rules)
         return {"answer": _format_attribution(result, department, entity, user, note)}
 
     if is_attribution_question and len(months) < 2:
@@ -294,5 +294,5 @@ def answer_question(db: Session, user: User, question: str) -> dict:
         months = available_months
         note += f"（没有指定月份，默认展示 {available_months[0]} 到 {available_months[-1]} 全部已入库月份）"
 
-    rows = get_trend(db, months=sorted(months), department=department, entity=entity)
+    rows = get_trend(db, months=sorted(months), department=department, entity=entity, scope_rules=scope.rules)
     return {"answer": _format_trend(rows, department, entity, note)}

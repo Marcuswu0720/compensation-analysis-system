@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..models import MonthlyEmployeeSnapshot
-from .scope import apply_scope_filter
+from .scope import ScopeRule, apply_permission_scope, apply_scope_filter
 
 ScopeValue = str | list[str] | None
 
@@ -52,6 +52,7 @@ def get_category_trend(
     months: list[str] | None = None,
     department: ScopeValue = None,
     entity: ScopeValue = None,
+    scope_rules: list[ScopeRule] | None = None,
 ) -> list[dict]:
     col = _column(category)
     q = db.query(
@@ -63,6 +64,7 @@ def get_category_trend(
         q = q.filter(MonthlyEmployeeSnapshot.month.in_(months))
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
+    q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
     return [
@@ -77,14 +79,18 @@ def get_category_trend(
 
 
 def compare_departments_by_category(
-    db: Session, category: str, month: str, entity: ScopeValue = None, allowed_departments: list[str] | None = None
+    db: Session,
+    category: str,
+    month: str,
+    entity: ScopeValue = None,
+    scope_rules: list[ScopeRule] | None = None,
 ) -> list[dict]:
     col = _column(category)
     hr_cost_q = db.query(MonthlyEmployeeSnapshot.department1, func.sum(MonthlyEmployeeSnapshot.hr_cost)).filter(
         MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
     )
     hr_cost_q = apply_scope_filter(hr_cost_q, MonthlyEmployeeSnapshot.entity, entity)
-    hr_cost_q = apply_scope_filter(hr_cost_q, MonthlyEmployeeSnapshot.department1, allowed_departments)
+    hr_cost_q = apply_permission_scope(hr_cost_q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     hr_cost_by_dept = {dept: total or 0.0 for dept, total in hr_cost_q.group_by(MonthlyEmployeeSnapshot.department1).all()}
 
     q = db.query(
@@ -93,7 +99,7 @@ def compare_departments_by_category(
         func.sum(col).label("total"),
     ).filter(MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
-    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, allowed_departments)
+    q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     q = q.group_by(MonthlyEmployeeSnapshot.department1).order_by(func.sum(col).desc())
 
     results = []
@@ -113,13 +119,18 @@ def compare_departments_by_category(
 
 
 def get_cost_composition(
-    db: Session, month: str, department: ScopeValue = None, entity: ScopeValue = None
+    db: Session,
+    month: str,
+    department: ScopeValue = None,
+    entity: ScopeValue = None,
+    scope_rules: list[ScopeRule] | None = None,
 ) -> dict:
     q = db.query(*[func.sum(_column(c)) for c in COMPOSITION_FIELDS], func.sum(MonthlyEmployeeSnapshot.hr_cost)).filter(
         MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
     )
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
+    q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     row = q.first()
     if row is None:
         return {"month": month, "department": department, "entity": entity, "hr_cost": 0.0, "categories": []}

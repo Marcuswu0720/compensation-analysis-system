@@ -25,7 +25,8 @@ def main():
         if user:
             user.password_hash = hash_password(password)
             user.role = "admin"
-            print(f"已重置用户 {username} 的密码，并设为 admin")
+            user.is_active = True
+            print(f"已重置用户 {username} 的密码，设为 admin，并确保账号处于启用状态")
         else:
             user = User(username=username, password_hash=hash_password(password), role="admin")
             db.add(user)
