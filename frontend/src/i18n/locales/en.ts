@@ -321,6 +321,7 @@ export default {
     resetToDefault: 'Reset to default',
     resetConfirm: 'Remove this team’s rule template override and restore mode-based default behavior?',
     resetSuccess: 'Reset to default',
+    missingOfficeRuleWarning: 'This team requires standard clock-in but has no Office Clock-in Rule (start/end time) configured yet. Employees will see "Rule not configured" until you set one up in the "Office Clock-in Rules" tab.',
     templateDesc: 'Team-level clock-in rule templates: configure whether clock-in is required, whether a photo is required, and whether business-metric assessment is required, per team/role — covering field collection, badge scanning, in-person sign-off, and other scenarios.',
     selectTeam: 'Select team',
     requiresClockIn: 'Requires clock-in',

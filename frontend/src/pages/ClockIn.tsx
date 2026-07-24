@@ -110,6 +110,11 @@ export default function ClockIn() {
               <Tag>{t('clockIn.noRecord')}</Tag>
             )}
           </Descriptions.Item>
+          {today?.record?.status === 'UNCONFIGURED' && today.record.remark && (
+            <Descriptions.Item label={t('common.remark')}>
+              <Typography.Text type="warning">{today.record.remark}</Typography.Text>
+            </Descriptions.Item>
+          )}
           {today?.record?.clockInAt && <Descriptions.Item label={t('clockIn.clockInTime')}>{dayjs(today.record.clockInAt).format('HH:mm:ss')}</Descriptions.Item>}
           {today?.record?.matchedOffice && (
             <Descriptions.Item label={t('clockIn.matchedOffice')}>{today.record.matchedOffice.name}</Descriptions.Item>

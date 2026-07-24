@@ -42,8 +42,13 @@ async function main() {
     ],
   });
 
-  await prisma.officeAttendanceRule.create({
-    data: { teamId: itTeam.id, startTime: '09:00', endTime: '18:00', lateGraceMinutes: 10, earlyGraceMinutes: 0 },
+  await prisma.officeAttendanceRule.createMany({
+    data: [
+      { teamId: itTeam.id, startTime: '09:00', endTime: '18:00', lateGraceMinutes: 10, earlyGraceMinutes: 0 },
+      // 地催团队打卡模式为 OFFICE + NEAREST_AUTO 分配，同样需要上下班时间/迟到宽限才能判定状态，
+      // 此前遗漏导致该团队员工打卡永远显示"未配置考勤规则"（问题反馈 2.3）
+      { teamId: fieldCollectionTeam.id, startTime: '09:00', endTime: '18:00', lateGraceMinutes: 15, earlyGraceMinutes: 0 },
+    ],
   });
 
   await prisma.shift.createMany({

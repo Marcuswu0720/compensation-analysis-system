@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, VerifyStatus } from '@prisma/client';
+import { AttendanceSource, AttendanceStatus, AuditAction, VerifyStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { combineBusinessDateAndTime, toBusinessDateOnly } from '../common/date-utils';
@@ -62,6 +62,22 @@ export class LocationCheckinService {
       where: { id: created.id },
       data: { photoUrl: `/api/location-checkin/${created.id}/photo` },
       select: PHOTO_LIST_SELECT,
+    });
+
+    // 拍照打卡此前只写入 LocationCheckInPhoto，从不创建/更新 AttendanceRecord，导致"今日状态"模块
+    // （查询 AttendanceRecord）对定位打卡团队永远看不到任何记录（问题反馈 2.6）。这里在首次上传时
+    // 补一条"待核实"记录，核实通过后在 verify() 里推进为"正常"。
+    const businessDate = toBusinessDateOnly(takenAt);
+    await this.prisma.attendanceRecord.upsert({
+      where: { userId_date: { userId: params.userId, date: businessDate } },
+      create: {
+        userId: params.userId,
+        date: businessDate,
+        clockInAt: takenAt,
+        status: AttendanceStatus.PENDING,
+        source: AttendanceSource.LOCATION_CLOCK,
+      },
+      update: {},
     });
 
     if (ruleTemplate?.photoIntervalThresholdMinutes) {
@@ -155,6 +171,17 @@ export class LocationCheckinService {
       operatorId,
       detail: { status, remark },
     });
+
+    // 核实通过后，把当天"待核实"的考勤记录推进为"正常"，使"今日状态"能反映最终结果（问题反馈 2.6）
+    if (status === VerifyStatus.APPROVED) {
+      const businessDate = toBusinessDateOnly(photo.takenAt);
+      const record = await this.prisma.attendanceRecord.findUnique({
+        where: { userId_date: { userId: photo.userId, date: businessDate } },
+      });
+      if (record && record.status === AttendanceStatus.PENDING) {
+        await this.prisma.attendanceRecord.update({ where: { id: record.id }, data: { status: AttendanceStatus.NORMAL } });
+      }
+    }
 
     return updated;
   }

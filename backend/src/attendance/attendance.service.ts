@@ -65,6 +65,7 @@ export class AttendanceService {
     let source: AttendanceSource = AttendanceSource.MANUAL;
     let scheduleAssignmentId: string | undefined;
     let matchedOfficeId: string | undefined;
+    let remark: string | undefined;
 
     if (rule.mode === AttendanceMode.SHIFT) {
       const assignment = await this.prisma.scheduleAssignment.findFirst({
@@ -100,10 +101,14 @@ export class AttendanceService {
 
       if (!officeRule) {
         // 员工未配置团队，或团队未配置打卡规则：无法判定迟到/早退，明确标记而非默默算作"正常"（问题反馈 2.2）
+        // 这两种情况原因不同，需要在提示里区分开，方便HR快速定位问题出在哪一步（问题反馈 2.3）
         status = AttendanceStatus.UNCONFIGURED;
+        remark = user.teamId
+          ? '所属团队未配置打卡规则（上班时间/迟到宽限），请联系本地HR前往"考勤规则配置-办公室打卡规则"设置'
+          : '员工未分配所属团队，请联系本地HR在"员工管理"中为其分配团队';
       } else {
         const graceStart = combineBusinessDateAndTime(today, officeRule.startTime);
-        graceStart.setMinutes(graceStart.getMinutes() + officeRule.lateGraceMinutes);
+        graceStart.setUTCMinutes(graceStart.getUTCMinutes() + officeRule.lateGraceMinutes);
         lateMinutes = Math.max(0, Math.round((now.getTime() - graceStart.getTime()) / 60000));
         status = lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.NORMAL;
       }
@@ -128,6 +133,7 @@ export class AttendanceService {
         matchedOfficeId,
         clockInLat: dto.lat,
         clockInLng: dto.lng,
+        remark,
       },
       update: {
         clockInAt: now,
@@ -138,6 +144,7 @@ export class AttendanceService {
         matchedOfficeId,
         clockInLat: dto.lat,
         clockInLng: dto.lng,
+        remark,
       },
       include: { matchedOffice: true },
     });
@@ -177,7 +184,7 @@ export class AttendanceService {
       const officeRule = await this.prisma.officeAttendanceRule.findUnique({ where: { teamId: user.teamId } });
       if (officeRule) {
         const graceEnd = combineBusinessDateAndTime(today, officeRule.endTime);
-        graceEnd.setMinutes(graceEnd.getMinutes() - officeRule.earlyGraceMinutes);
+        graceEnd.setUTCMinutes(graceEnd.getUTCMinutes() - officeRule.earlyGraceMinutes);
         earlyMinutes = Math.max(0, Math.round((graceEnd.getTime() - now.getTime()) / 60000));
         hasRule = true;
       } else {
@@ -187,15 +194,19 @@ export class AttendanceService {
       hasRule = false;
     }
 
+    let remark: string | undefined;
     if (!hasRule) {
       status = AttendanceStatus.UNCONFIGURED;
+      remark = user.teamId
+        ? '所属团队未配置打卡规则（上班时间/迟到宽限），请联系本地HR前往"考勤规则配置-办公室打卡规则"设置'
+        : '员工未分配所属团队，请联系本地HR在"员工管理"中为其分配团队';
     } else if (earlyMinutes > 0 && status === AttendanceStatus.NORMAL) {
       status = AttendanceStatus.EARLY_LEAVE;
     }
 
     return this.prisma.attendanceRecord.update({
       where: { id: record.id },
-      data: { clockOutAt: now, earlyMinutes, status },
+      data: { clockOutAt: now, earlyMinutes, status, remark: remark ?? record.remark },
     });
   }
 

@@ -60,7 +60,12 @@ function RuleTemplateTab() {
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const [teamId, setTeamId] = useState<string>();
   const { data: template } = useQuery({ queryKey: ['rule-template', teamId], queryFn: () => ruleTemplatesApi.get(teamId!), enabled: !!teamId });
+  const { data: officeRule } = useQuery({ queryKey: ['office-rule', teamId], queryFn: () => teamsApi.getOfficeRule(teamId!), enabled: !!teamId });
   const [form] = Form.useForm();
+  // 仅在"已保存的团队规则模板"明确要求标准打卡（非拍照流程、且指定了办公室分配方式）时才提示，
+  // 避免对排班打卡等团队因表单默认值误报（问题反馈 2.3：地催团队正是这种配置组合导致遗漏了办公室打卡规则）
+  const missingOfficeRule =
+    !!template && template.requiresClockIn && !template.requiresPhoto && template.officeAssignmentMode !== 'NONE' && officeRule === null;
 
   useEffect(() => {
     form.setFieldsValue(
@@ -101,6 +106,9 @@ function RuleTemplateTab() {
           style={{ marginBottom: 16 }}
           message={template ? t('adminRules.templateOverrideActive') : t('adminRules.templateNoOverride')}
         />
+      )}
+      {missingOfficeRule && (
+        <Alert type="error" showIcon style={{ marginBottom: 16 }} message={t('adminRules.missingOfficeRuleWarning')} />
       )}
       {teamId && (
         <Form layout="vertical" form={form} onFinish={(v) => mutation.mutate(v)}>

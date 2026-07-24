@@ -321,6 +321,7 @@ export default {
     resetToDefault: '重置为默认',
     resetConfirm: '确认清除该团队的规则模板覆盖，恢复为按打卡模式的默认行为？',
     resetSuccess: '已重置为默认',
+    missingOfficeRuleWarning: '该团队需要标准打卡，但尚未配置"办公室打卡规则"（上下班时间），员工打卡会一直显示"未配置考勤规则"，请前往"办公室打卡规则"tab补充设置。',
     templateDesc: '团队级细分打卡规则模板：按团队/岗位维度配置是否打卡/是否需要照片/是否需要业务指标考核，覆盖地催、码牌、面签等场景。',
     selectTeam: '选择团队',
     requiresClockIn: '需要上班打卡',
