@@ -277,25 +277,18 @@
           <label>选择账号</label>
           <select id="permUserSelect"></select>
         </div>
-        <div>
-          <label>授权类型</label>
-          <select id="permScopeType">
-            <option value="entity">整体实体</option>
-            <option value="entity_department">实体下的特定部门</option>
-          </select>
-        </div>
-        <div>
-          <label>实体</label>
-          <select id="permEntitySelect"></select>
-        </div>
-        <div id="permDepartmentWrap">
-          <label>部门</label>
-          <select id="permDepartmentSelect"></select>
-        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        可以一次勾选多个实体、多个部门，点一次"批量授予"就会全部生效。勾了某个实体的"整个实体"，
+        就不用再勾它下面的具体部门了（会被自动忽略，避免重复规则）。
+      </div>
+      <div id="permScopeChecklist" style="margin-top:12px;"></div>
+      <div class="row" style="margin-top:10px;">
         <div style="flex:0;">
-          <button id="grantPermBtn">授予</button>
+          <button id="grantPermBtn">批量授予</button>
         </div>
       </div>
+      <div class="error" id="grantPermError"></div>
       <div class="muted" style="margin-top:8px;">
         每条授权规则本身就是一个完整范围："整体实体"授予该实体下全部部门；"实体下的特定部门"只授予那一个
         实体+部门的组合，不会连带其他实体下的同名部门。一个账号可以有多条规则，规则之间取并集。

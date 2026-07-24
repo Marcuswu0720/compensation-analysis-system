@@ -556,21 +556,41 @@ async function toggleUserActive(userId, nextActive, username) {
 
 async function loadEntityDepartments() {
   entityDepartmentMap = await apiJson('/api/auth/entity-departments');
-  const entitySelect = document.getElementById('permEntitySelect');
+  renderPermScopeChecklist();
+}
+
+function renderPermScopeChecklist() {
   const entities = Object.keys(entityDepartmentMap);
-  entitySelect.innerHTML = entities.map((e) => `<option value="${e}">${e}</option>`).join('');
-  updatePermDepartmentOptions();
-}
+  const container = document.getElementById('permScopeChecklist');
+  if (entities.length === 0) {
+    container.innerHTML = '<div class="muted">还没有任何已入库的部门/实体数据，先上传并确认一个月份的数据再来分配权限。</div>';
+    return;
+  }
+  container.innerHTML = entities
+    .map((entity) => {
+      const depts = entityDepartmentMap[entity] || [];
+      return `
+      <div class="scope-entity-block">
+        <label><input type="checkbox" class="entity-check" data-entity="${entity}"> 整个实体：${entity}</label>
+        <div class="scope-dept-list">
+          ${depts
+            .map((d) => `<label class="dept-label" data-entity="${entity}"><input type="checkbox" class="dept-check" data-entity="${entity}" data-dept="${d}"> ${d}</label>`)
+            .join('')}
+        </div>
+      </div>`;
+    })
+    .join('');
 
-function updatePermDepartmentOptions() {
-  const entity = document.getElementById('permEntitySelect').value;
-  const departments = entityDepartmentMap[entity] || [];
-  document.getElementById('permDepartmentSelect').innerHTML = departments.map((d) => `<option value="${d}">${d}</option>`).join('');
-}
-
-function updatePermScopeTypeUI() {
-  const isEntityDept = document.getElementById('permScopeType').value === 'entity_department';
-  document.getElementById('permDepartmentWrap').style.display = isEntityDept ? '' : 'none';
+  container.querySelectorAll('.entity-check').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const entity = cb.dataset.entity;
+      container.querySelectorAll(`.dept-check[data-entity="${CSS.escape(entity)}"]`).forEach((deptCb) => {
+        deptCb.disabled = cb.checked;
+        if (cb.checked) deptCb.checked = false;
+        deptCb.closest('label').classList.toggle('disabled', cb.checked);
+      });
+    });
+  });
 }
 
 async function loadCurrentPermissions() {
@@ -644,25 +664,41 @@ function initPermissionsTab() {
     }
   });
 
-  document.getElementById('permScopeType').addEventListener('change', updatePermScopeTypeUI);
-  document.getElementById('permEntitySelect').addEventListener('change', updatePermDepartmentOptions);
   document.getElementById('permUserSelect').addEventListener('change', loadCurrentPermissions);
   document.getElementById('permShowRevoked').addEventListener('change', loadCurrentPermissions);
-  updatePermScopeTypeUI();
 
   document.getElementById('grantPermBtn').addEventListener('click', async () => {
     const userId = document.getElementById('permUserSelect').value;
+    const errEl = document.getElementById('grantPermError');
+    errEl.textContent = '';
     if (!userId) return;
-    const scopeType = document.getElementById('permScopeType').value;
-    const payload = { scope_type: scopeType, entity: document.getElementById('permEntitySelect').value };
-    if (scopeType === 'entity_department') {
-      payload.department1 = document.getElementById('permDepartmentSelect').value;
+
+    const container = document.getElementById('permScopeChecklist');
+    const grants = [];
+    container.querySelectorAll('.entity-check:checked').forEach((cb) => {
+      grants.push({ scope_type: 'entity', entity: cb.dataset.entity });
+    });
+    container.querySelectorAll('.dept-check:checked').forEach((cb) => {
+      grants.push({ scope_type: 'entity_department', entity: cb.dataset.entity, department1: cb.dataset.dept });
+    });
+
+    if (grants.length === 0) {
+      errEl.textContent = '请至少勾选一个实体或部门';
+      return;
     }
+
     try {
-      await apiPost(`/api/auth/users/${userId}/permissions`, payload);
+      for (const payload of grants) {
+        await apiPost(`/api/auth/users/${userId}/permissions`, payload);
+      }
+      container.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.checked = false;
+        cb.disabled = false;
+        cb.closest('label').classList.remove('disabled');
+      });
       await loadCurrentPermissions();
     } catch (e) {
-      alert('授权失败：' + e.message);
+      errEl.textContent = '授权失败：' + e.message;
     }
   });
 

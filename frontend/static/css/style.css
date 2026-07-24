@@ -135,3 +135,10 @@ th { color: var(--muted); font-weight: 500; }
 .chat-input-row textarea { flex: 1; resize: none; height: 44px; }
 
 .muted { color: var(--muted); font-size: 12px; }
+
+.scope-entity-block { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.scope-entity-block:last-child { border-bottom: none; }
+.scope-entity-block label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; margin: 0; color: inherit; font-weight: 600; }
+.scope-dept-list { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0 22px; }
+.scope-dept-list label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: normal; margin: 0; color: inherit; }
+.scope-dept-list label.disabled { color: var(--muted); }
