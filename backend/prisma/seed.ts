@@ -30,15 +30,19 @@ async function main() {
   const fieldCollectionTeam = await prisma.team.create({ data: { name: '分期-催收-地催团队', departmentId: installmentDept.id } });
   const smeFieldCollectionTeam = await prisma.team.create({ data: { name: 'SME-催收-地推催收', departmentId: smeDept.id } });
   const smeBdTeam = await prisma.team.create({ data: { name: 'SME-BD-码牌团队', departmentId: smeDept.id } });
+  // 电催团队：远程电话催收，居家办公打卡（问题反馈 3.1）。该模式为通用配置项，非写死给固定团队，
+  // 这里同时把电催、信审两个团队都配置为居家办公，验证"任意团队均可灵活配置"这一要求
+  const phoneCollectionTeam = await prisma.team.create({ data: { name: '分期-催收-电催团队', departmentId: installmentDept.id } });
 
   await prisma.teamAttendanceModeConfig.createMany({
     data: [
       { teamId: itTeam.id, mode: AttendanceMode.OFFICE },
       { teamId: kaTeam.id, mode: AttendanceMode.SHIFT },
-      { teamId: creditReviewTeam.id, mode: AttendanceMode.SHIFT },
+      { teamId: creditReviewTeam.id, mode: AttendanceMode.HOME_OFFICE },
       { teamId: fieldCollectionTeam.id, mode: AttendanceMode.OFFICE },
       { teamId: smeFieldCollectionTeam.id, mode: AttendanceMode.LOCATION },
       { teamId: smeBdTeam.id, mode: AttendanceMode.LOCATION },
+      { teamId: phoneCollectionTeam.id, mode: AttendanceMode.HOME_OFFICE },
     ],
   });
 
@@ -48,6 +52,9 @@ async function main() {
       // 地催团队打卡模式为 OFFICE + NEAREST_AUTO 分配，同样需要上下班时间/迟到宽限才能判定状态，
       // 此前遗漏导致该团队员工打卡永远显示"未配置考勤规则"（问题反馈 2.3）
       { teamId: fieldCollectionTeam.id, startTime: '09:00', endTime: '18:00', lateGraceMinutes: 15, earlyGraceMinutes: 0 },
+      // 居家办公团队同样复用"上下班时间+迟到宽限"判定，只是不关联办公室、不做地理围栏校验（问题反馈 3.1）
+      { teamId: creditReviewTeam.id, startTime: '09:00', endTime: '17:00', lateGraceMinutes: 10, earlyGraceMinutes: 0 },
+      { teamId: phoneCollectionTeam.id, startTime: '09:00', endTime: '18:00', lateGraceMinutes: 10, earlyGraceMinutes: 0 },
     ],
   });
   // IT团队关联 Lagos 办公室，打卡时校验地理围栏范围（问题反馈 1.1）
@@ -60,7 +67,6 @@ async function main() {
     data: [
       { teamId: kaTeam.id, name: '早班', nameEn: 'Morning shift', startTime: '08:00', endTime: '16:00' },
       { teamId: kaTeam.id, name: '晚班', nameEn: 'Evening shift', startTime: '14:00', endTime: '22:00' },
-      { teamId: creditReviewTeam.id, name: '早班', nameEn: 'Morning shift', startTime: '09:00', endTime: '17:00' },
     ],
   });
 
@@ -219,6 +225,32 @@ async function main() {
     },
   });
 
+  await prisma.user.create({
+    data: {
+      employeeNo: 'EMP005',
+      name: 'Chioma (Credit Review, Home Office)',
+      email: 'chioma@example.com',
+      passwordHash,
+      role: Role.EMPLOYEE,
+      departmentId: installmentDept.id,
+      teamId: creditReviewTeam.id,
+      hireDate: new Date('2024-07-01'),
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      employeeNo: 'EMP006',
+      name: 'Bassey (Phone Collection, Home Office)',
+      email: 'bassey@example.com',
+      passwordHash,
+      role: Role.EMPLOYEE,
+      departmentId: installmentDept.id,
+      teamId: phoneCollectionTeam.id,
+      hireDate: new Date('2024-07-01'),
+    },
+  });
+
   console.log('Seed complete. Demo accounts (password: Passw0rd!):');
   console.log('  hq.admin@example.com   (HQ, 只读)');
   console.log('  hr@example.com         (LOCAL_HR)');
@@ -228,6 +260,8 @@ async function main() {
   console.log('  emeka@example.com      (EMPLOYEE, 排班打卡)');
   console.log('  ifeoma@example.com     (EMPLOYEE, 地催-办公室打卡最近分配)');
   console.log('  tunde@example.com      (EMPLOYEE, SME-BD 码牌团队-定位打卡)');
+  console.log('  chioma@example.com     (EMPLOYEE, 信审-居家办公打卡)');
+  console.log('  bassey@example.com     (EMPLOYEE, 电催-居家办公打卡)');
 }
 
 main()

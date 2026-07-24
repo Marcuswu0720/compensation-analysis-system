@@ -1,6 +1,6 @@
 export type Role = 'EMPLOYEE' | 'LOCAL_MANAGER' | 'LOCAL_HR' | 'HQ' | 'QC_TEAM';
 
-export type AttendanceMode = 'OFFICE' | 'SHIFT' | 'LOCATION';
+export type AttendanceMode = 'OFFICE' | 'SHIFT' | 'LOCATION' | 'HOME_OFFICE';
 
 export type AttendanceStatus =
   | 'NORMAL'

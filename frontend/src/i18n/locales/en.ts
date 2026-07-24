@@ -400,6 +400,7 @@ export default {
     OFFICE: 'Office clock-in',
     SHIFT: 'Shift clock-in',
     LOCATION: 'Location clock-in',
+    HOME_OFFICE: 'Home office clock-in',
   },
   eventType: {
     EXTREME_WEATHER: 'Extreme Weather',

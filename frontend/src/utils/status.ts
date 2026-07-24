@@ -64,6 +64,7 @@ export function useModeLabel(): Record<AttendanceMode, string> {
     OFFICE: t('mode.OFFICE'),
     SHIFT: t('mode.SHIFT'),
     LOCATION: t('mode.LOCATION'),
+    HOME_OFFICE: t('mode.HOME_OFFICE'),
   };
 }
 

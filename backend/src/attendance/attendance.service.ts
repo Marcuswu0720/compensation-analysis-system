@@ -82,8 +82,9 @@ export class AttendanceService {
       status = lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.NORMAL;
       source = AttendanceSource.SHIFT_CLOCK;
     } else {
-      // 办公室打卡（含"最近办公室自动分配"变体，例如地催团队：两者共用同一套迟到判定逻辑，
-      // NEAREST_AUTO 只是在此基础上额外做定位匹配，不应跳过迟到判断 —— 见问题反馈 2.1/4.1）
+      // 办公室打卡 / 居家办公打卡（含"最近办公室自动分配"变体，例如地催团队）：三者共用同一套迟到判定逻辑，
+      // NEAREST_AUTO 只是在此基础上额外做定位匹配，不应跳过迟到判断 —— 见问题反馈 2.1/4.1
+      // 居家办公打卡不做地理位置/IP限制（问题反馈 3.1），复用本分支的时间判定逻辑，避免另起一套导致行为不一致
       if (rule.officeAssignmentMode === 'NEAREST_AUTO') {
         if (dto.lat === undefined || dto.lng === undefined) {
           throw new BadRequestException('该岗位需上传定位以自动分配最近办公室');
@@ -108,7 +109,8 @@ export class AttendanceService {
           : '员工未分配所属团队，请联系本地HR在"员工管理"中为其分配团队';
       } else {
         // 团队关联了办公室时才做地理围栏校验，未关联的团队沿用原行为不做限制（问题反馈 1.1）
-        if (rule.officeAssignmentMode !== 'NEAREST_AUTO' && officeRule.offices.length > 0) {
+        // 居家办公模式始终跳过地理围栏校验，即使团队误关联了办公室也不校验（问题反馈 3.1）
+        if (rule.mode !== AttendanceMode.HOME_OFFICE && rule.officeAssignmentMode !== 'NEAREST_AUTO' && officeRule.offices.length > 0) {
           if (dto.lat === undefined || dto.lng === undefined) {
             throw new BadRequestException('该团队已限定打卡范围，请开启定位权限后重试');
           }
@@ -123,7 +125,7 @@ export class AttendanceService {
         lateMinutes = Math.max(0, Math.round((now.getTime() - graceStart.getTime()) / 60000));
         status = lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.NORMAL;
       }
-      source = AttendanceSource.OFFICE_CLOCK;
+      source = rule.mode === AttendanceMode.HOME_OFFICE ? AttendanceSource.HOME_OFFICE_CLOCK : AttendanceSource.OFFICE_CLOCK;
     }
 
     const existing = await this.prisma.attendanceRecord.findUnique({ where: { userId_date: { userId, date: today } } });

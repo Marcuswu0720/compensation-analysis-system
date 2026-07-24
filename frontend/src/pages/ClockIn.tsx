@@ -38,6 +38,7 @@ export default function ClockIn() {
   }
 
   const { data: today, refetch } = useQuery({ queryKey: ['attendance-today'], queryFn: attendanceApi.today });
+  const isHomeOffice = today?.effectiveRule?.mode === 'HOME_OFFICE';
   // 员工本人查看自己的定位打卡照片轨迹（问题反馈 4.3：之前只能看到全勤/异常，看不到自己实际拍过的照片）
   const { data: myPhotos = [] } = useQuery({
     queryKey: ['my-location-trajectory', trajectoryDate.format('YYYY-MM-DD')],
@@ -47,6 +48,8 @@ export default function ClockIn() {
 
   const clockInMutation = useMutation({
     mutationFn: async () => {
+      // 居家办公打卡不做地理位置限制，无需请求定位权限（问题反馈 3.1）
+      if (isHomeOffice) return attendanceApi.clockIn(undefined);
       let coords: { lat: number; lng: number } | undefined;
       try {
         coords = await getGeolocation();
@@ -65,6 +68,7 @@ export default function ClockIn() {
 
   const clockOutMutation = useMutation({
     mutationFn: async () => {
+      if (isHomeOffice) return attendanceApi.clockOut(undefined);
       let coords: { lat: number; lng: number } | undefined;
       try {
         coords = await getGeolocation();

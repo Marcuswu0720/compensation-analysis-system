@@ -139,6 +139,7 @@ enum AttendanceMode {
   OFFICE // 模式1：办公室打卡
   SHIFT // 模式2：排班打卡
   LOCATION // 模式3：定位打卡
+  HOME_OFFICE // 模式4：居家办公打卡（问题反馈 3.1，复用办公室打卡的时间判定逻辑，仅去掉地理位置/IP校验）
 }
 
 model TeamAttendanceModeConfig {
@@ -187,6 +188,7 @@ enum AttendanceSource {
   OFFICE_CLOCK
   SHIFT_CLOCK
   LOCATION_CLOCK
+  HOME_OFFICE_CLOCK
   SPECIAL_EVENT_AUTO
   LEAVE_AUTO
   MANUAL

@@ -400,6 +400,7 @@ export default {
     OFFICE: '办公室打卡',
     SHIFT: '排班打卡',
     LOCATION: '定位打卡',
+    HOME_OFFICE: '居家办公打卡',
   },
   eventType: {
     EXTREME_WEATHER: '极端天气',
