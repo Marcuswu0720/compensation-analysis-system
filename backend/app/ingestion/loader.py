@@ -360,6 +360,9 @@ def _stage_supplemental(db: Session, month: str, file_bytes: bytes, salary_type:
     }
 
 
+_BONUS_BASE_FALLBACK_KEYS = ("employment_type", "department2", "department3", "position", "reporting_line", "job_grade", "joining_date")
+
+
 def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
     """The standalone 奖金批次 upload: a full structured template, not the
     loose staff_id+amount shape backpay uses - see ingestion/bonus_batch.py.
@@ -367,7 +370,18 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
     column of its own - it does, and is parsed directly like every other
     field; the fallback to the matched base-batch employee's entity (as
     _stage_supplemental already does for backpay) only kicks in when a row's
-    own Entity is missing/blank."""
+    own Entity is missing/blank.
+
+    A real production export showed Employment Type/Position/Reporting Line/
+    Job Grade/Department 3 coming back blank for every bonus row even though
+    staff_name/department1/entity were fine - root cause is that those three
+    already fell back to the matched base-batch employee's snapshot when the
+    bonus row's own value was missing, but employment_type/department2/
+    department3/position/reporting_line/job_grade/joining_date never got the
+    same fallback. There's no reason bonus files should be expected to repeat
+    every basic-info column the base salary batch already has for the same
+    employee, so this applies the identical fallback to all of them instead
+    of leaving it as a special case for just three fields."""
     parsed = parse_bonus_batch_workbook(io.BytesIO(file_bytes))
     resolver = NameResolver(db, month)
     resolver.prepare("department", [r["department1_raw"] for r in parsed.rows])
@@ -391,25 +405,20 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
         matched = base is not None
         if not matched:
             unmatched_count += 1
+        fallback = {key: r.get(key) or (getattr(base, key, None) if base else None) for key in _BONUS_BASE_FALLBACK_KEYS}
         entries.append(
             {
                 "staff_id": r["staff_id"],
                 "staff_name": r["staff_name"] or (base.staff_name if base else None),
                 "department1": resolver.resolve("department", department1_raw),
                 "entity": resolver.resolve("entity", entity_source) if entity_source else None,
-                "employment_type": r.get("employment_type"),
                 "amount": r["amount"],
                 "source_sheet": r["source_sheet"],
                 "matched_base_employee": matched,
-                "department2": r.get("department2"),
-                "department3": r.get("department3"),
-                "position": r.get("position"),
-                "reporting_line": r.get("reporting_line"),
-                "job_grade": r.get("job_grade"),
                 "location": r.get("location"),
-                "joining_date": r.get("joining_date"),
                 "resign_date": r.get("resign_date"),
                 "full_detail_json": json.dumps(r["full_detail_json_fields"]),
+                **fallback,
             }
         )
 

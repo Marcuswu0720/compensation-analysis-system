@@ -20,6 +20,7 @@ from app.ingestion.full_fields import (
     BONUS_FIELDS,
     BONUS_TOP_LEVEL_KEYS,
     CONTRACT_FIELDS,
+    FORMAL_FIELDS,
     NEW_DESCRIPTIVE_KEYS,
     TOP_LEVEL_DESCRIPTIVE_KEYS,
     FieldSpec,
@@ -177,6 +178,28 @@ def test_contract_fields_matches_flexi_alternate_headers():
     assert top_level["work_station"] == "value-of-Work Location"
     assert detail_json["should_work_days"] == "value-of-Should Working Days"
     assert detail_json["airtime_data_allowance"] == "value-of-Airtime / Data Allowance / POS Storage Subcidy"
+
+
+def test_formal_and_contract_deduction_fields_match_spelled_out_headers():
+    """Regression test found against a real production export: Late
+    Deduction/Porated Days Deduction/Absent Deduction (Formal) and Late
+    Deduction (Contract) came back blank for every row - the coded aliases
+    ("Late Ded.", "Porated Days Ded.", "Absent Ded.", "Lateness deduction")
+    don't match the real files, which spell every attendance/deduction
+    column out in full like their neighbors (Hourly Late, Porated Days,
+    Absent Days)."""
+    formal_index = build_header_index(["Late Deduction", "Porated Days Deduction", "Absent Deduction"])
+    assert find_alias(formal_index, next(s for s in FORMAL_FIELDS if s.key == "late_deduction").source_aliases) == "Late Deduction"
+    assert (
+        find_alias(formal_index, next(s for s in FORMAL_FIELDS if s.key == "porated_days_deduction").source_aliases)
+        == "Porated Days Deduction"
+    )
+    assert (
+        find_alias(formal_index, next(s for s in FORMAL_FIELDS if s.key == "absent_deduction").source_aliases) == "Absent Deduction"
+    )
+
+    contract_index = build_header_index(["Late Deduction"])
+    assert find_alias(contract_index, next(s for s in CONTRACT_FIELDS if s.key == "late_deduction").source_aliases) == "Late Deduction"
 
 
 def test_bonus_fields_matches_real_alternate_headers():
@@ -425,6 +448,41 @@ def test_confirmed_bonus_batch_falls_back_to_base_employee_entity_when_blank(db_
 
     ghost = next(r for r in rows if r.staff_id == "GHOST")
     assert ghost.entity is None  # no base match, own Entity column also blank - genuinely can't resolve
+
+
+def test_confirmed_bonus_batch_falls_back_to_base_employee_descriptive_fields_when_blank(db_session):
+    """Regression test found against a real production export: Employment
+    Type/Position/Reporting Line/Job Grade/Department 3 came back blank for
+    every bonus row, even for employees matched to a base-batch employee that
+    had all of these. staff_name/department1/entity already had this
+    fallback (see the test above); the rest of the descriptive fields need
+    the identical fallback, not a separate mechanism."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _sheet(
+        wb,
+        "Formal",
+        ["Staff ID", "Staff Name", "Entity", "Department 1", "Department 2", "Department 3", "Position", "Reporting Line", "Job Grade", "HR Cost", "Resign Date"],
+        [["E001", "Alice", "PalmPay", "Sales", "Sub-Sales", "Team A", "Engineer", "Manager Mike", "P1", 1000, None]],
+    )
+    buf = io.BytesIO()
+    wb.save(buf)
+    base_batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="base.xlsx", uploaded_by="t", salary_type="base")
+    confirm_upload(db_session, base_batch, operator="tester")
+
+    bonus_bytes = build_full_bonus_workbook(
+        [_bonus_row(staff_id="E001", hr_cost=500, **{"Employment Type": None, "Department 2": None, "Department 3": None, "Job Title": None, "Reporting Line": None, "Job Grade": None})]
+    )
+    bonus_batch = stage_upload(db_session, month="2026-01", file_bytes=bonus_bytes, filename="bonus.xlsx", uploaded_by="t", salary_type="bonus")
+    confirm_upload(db_session, bonus_batch, operator="tester")
+
+    alice = db_session.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.staff_id == "E001", SupplementalPaySnapshot.pay_type == "bonus").one()
+    assert alice.employment_type == "Formal"
+    assert alice.department2 == "Sub-Sales"
+    assert alice.department3 == "Team A"
+    assert alice.position == "Engineer"
+    assert alice.reporting_line == "Manager Mike"
+    assert alice.job_grade == "P1"
 
 
 def test_full_field_key_sets_do_not_overlap():

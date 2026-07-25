@@ -72,11 +72,19 @@ FORMAL_FIELDS: list[FieldSpec] = [
     FieldSpec("transportation_subsidy", "Transportation Subsidy", "油补", ("Transportation Subsidy",), True),
     FieldSpec("performance_std", "Performance STD", "绩效标准薪酬", ("Performance STD",), True),
     FieldSpec("hourly_late", "Hourly Late", "迟到小时数", ("Hourly Late",), True),
-    FieldSpec("late_deduction", "Late Deduction", "迟到扣款", ("Late Ded.",), True),
+    # A real production export showed this column blank for every row despite
+    # the sheet having the data - "Late Ded." (the abbreviated form the
+    # mapping file used) doesn't match the real header, which spells the
+    # word out in full like every sibling attendance/deduction column above
+    # and below it (Hourly Late, Porated Days, Absent Days). Kept as a
+    # fallback alias in case some file really does use the abbreviation.
+    FieldSpec("late_deduction", "Late Deduction", "迟到扣款", ("Late Deduction", "Late Ded."), True),
     FieldSpec("porated_days", "Porated Days", "未满月天数", ("Porated Days",), True),
-    FieldSpec("porated_days_deduction", "Porated Days Deduction", "未满月扣款", ("Porated Days Ded.",), True),
+    FieldSpec(
+        "porated_days_deduction", "Porated Days Deduction", "未满月扣款", ("Porated Days Deduction", "Porated Days Ded."), True
+    ),
     FieldSpec("absent_days", "Absent Days", "无故缺勤天数", ("Absent Days",), True),
-    FieldSpec("absent_deduction", "Absent Deduction", "缺勤扣款", ("Absent Ded.",), True),
+    FieldSpec("absent_deduction", "Absent Deduction", "缺勤扣款", ("Absent Deduction", "Absent Ded."), True),
     FieldSpec("attendance_rate", "Attendance Rate", "出勤率", ("Attendance Rate",), True),
     FieldSpec("basic_salary_actual", "Actual Monthly Basic", "当月应发底薪", ("Actual Monthly Basic Salary",), True),
     FieldSpec("performance_coefficient", "KPI Coefficient", "绩效系数", ("Coefficient",), True),
@@ -147,7 +155,11 @@ CONTRACT_FIELDS: list[FieldSpec] = [
     FieldSpec("performance_coefficient", "KPI Coefficient", "绩效系数", ("KPI Coeff.",), True),
     FieldSpec("performance_bonus", "Performance Bonus", "绩效薪资", ("Perfomance bonus",), True),  # sic - real column misspelled
     FieldSpec("hourly_late", "Hourly Late", "迟到小时数", ("Hourly Late",), True),
-    FieldSpec("late_deduction", "Late Deduction", "迟到扣款", ("Lateness deduction",), True),
+    # Same real-file mismatch as FORMAL_FIELDS' late_deduction: a real
+    # production export showed this blank for every Contract row too.
+    # "Lateness deduction" is kept as a fallback in case some file really
+    # uses that wording.
+    FieldSpec("late_deduction", "Late Deduction", "迟到扣款", ("Late Deduction", "Lateness deduction"), True),
     FieldSpec("commission_bonus", "Commission / Bonus", "奖金", ("Commission/Bonus",), True),
     FieldSpec("overtime_hours", "Overtime Hours", "加班小时", ("Overtime Hour",), True),
     FieldSpec("overtime_amount", "Overtime Amount", "加班收入", ("Overtime income",), True),

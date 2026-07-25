@@ -119,9 +119,43 @@
      解析出来（不是格式问题，是当时的字段别名就没匹配上），那部分数据没法靠读时修复找回，只能
      删除重新上传那个月的批次——这两种坑的区别（"格式问题可以补救" vs "从没抓到值必须重新
      上传"）以后遇到类似"老数据显示不对"的反馈时要先分清楚是哪一种。
+- **V1.9 热修复之后的第二轮**（用户用真实一月导出文件复核后反馈"扣款金额依旧丢失"+"奖金基础
+  信息依旧丢失"，本次会话只处理这两类，未改动其他文件）：
+  1. **正式工/合同工"扣款金额"字段的别名guess错误**——`FORMAL_FIELDS` 里
+     `late_deduction`/`porated_days_deduction`/`absent_deduction` 三个字段的 `source_aliases`
+     此前只有缩写形式（`"Late Ded."`/`"Porated Days Ded."`/`"Absent Ded."`），`CONTRACT_FIELDS`
+     的 `late_deduction` 只有 `"Lateness deduction"`——这批缩写是从"权威映射文件"直接抄来的，
+     从没有像同批次的其他别名那样针对真实文件复核过，而同类字段（`Hourly Late`/`Porated Days`/
+     `Absent Days`）真实表头都是把词拼全的。真实导出文件里这几列 100% 为空，跟"表头缩写猜错"这个
+     假设吻合。修复方式：把拼全的形式（`"Late Deduction"`/`"Porated Days Deduction"`/
+     `"Absent Deduction"`）加为第一别名，原有缩写保留作为兜底别名，不删除。**注意**：如果某个月
+     的批次是在这次修复之前 confirm 入库的，这个修复不会追溯生效（见"已知的坑"第 3 条），需要
+     用户重新上传那个月的批次才能看到扣款金额；这不是本次改动能解决的。
+  2. **奖金批次基础信息字段缺少"回落到底薪批次员工"的兜底**——`loader.py::_stage_bonus_batch`
+     里 `staff_name`/`department1`/`entity` 三个字段一直都有"奖金文件自己这一列是空的话，就用
+     同月同工号已入库的底薪批次员工信息兜底"的逻辑，但 `employment_type`/`department2`/
+     `department3`/`position`/`reporting_line`/`job_grade`/`joining_date` 这几个同样是"基础
+     信息"的字段一直没有这个兜底，只要奖金文件自己这一列没填（很常见，奖金模板本来就不会重复
+     填一遍底薪批次已有的信息），这些字段就会是空的——这是一个真正的代码 bug，不是表头别名没
+     对上。修复方式：新增 `_BONUS_BASE_FALLBACK_KEYS` 常量，统一给这 7 个字段套用跟
+     `staff_name`/`department1`/`entity` 一样的兜底逻辑，而不是继续维护两套不一致的处理方式。
+  - 新增回归测试：`tests/test_full_fields.py` 的
+    `test_formal_and_contract_deduction_fields_match_spelled_out_headers`（用真实拼全的表头名
+    验证别名能匹配到）和
+    `test_confirmed_bonus_batch_falls_back_to_base_employee_descriptive_fields_when_blank`（验证
+    奖金行自己字段为空时能从底薪批次员工兜底）。
 
 ## 未完成 / 待跟进事项
 
+- **这次导出文件里还有其他字段是空的，但不在这次任务范围内，没有动**：用户这次附的真实一月导出
+  文件里，合同工明细的 `Reporting Line`/`Work Station`/`Should Work Days`/`Airtime/Data
+  Allowance`/`Overtime Hours`/`Other Income` 也是整列 100% 空的——其中前四个按理说应该已经被
+  上一轮热修复（`Chinese Reporting line`/`Work Location`/`Should Working Days`/更长的话补列名）
+  覆盖到了，但这份导出里依旧全空。这次会话只处理了用户明确点名的"扣款金额"和"奖金基础信息"两类，
+  没有去查这几个字段——**优先怀疑是这批数据是在上一轮热修复之前 confirm 入库的旧数据**（见"已知
+  的坑"第 3 条，旧数据不会因为代码修复而自动更新），需要先确认用户是否已经用修复后的代码重新
+  上传过这个月的批次；如果重新上传后这几个字段依旧是空的，那才说明上一轮的别名修复本身有问题，
+  需要另外排查（比如这个真实文件里合同工的表头写法比之前验证过的两种更多）。
 - **合并到 main 分支**：早前提过一次要不要把 `claude/compensation-analysis-site-un8j4k` 合并
   到 `main`，用户没有回应，之后没有再提——不要擅自合并，除非用户明确要求。
 - **GitHub 仓库疑似改名**：`git push` 时远端一直提示"This repository moved. Please use the
