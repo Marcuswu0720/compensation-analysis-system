@@ -1,7 +1,8 @@
-"""Salary-category breakdown queries (PRD V1.1 §2.3): trend for a single
-category, cross-department comparison for a category in one month, and the
-full cost-composition percentage split for a scope/month. All deterministic
-SQL aggregation over the component fields ingestion/salary_components.py
+"""Salary-category breakdown queries (PRD V1.1 §2.3, multi-category trend
+added by PRD V1.7 §3.1): trend for one or more categories at once,
+cross-department comparison for a category in one month, and the full
+cost-composition percentage split for a scope/month. All deterministic SQL
+aggregation over the component fields ingestion/salary_components.py
 extracts - no supplemental (bonus/backpay) folding here, since those only
 ever populate hr_cost via compute/trends.py, not the per-component fields.
 """
@@ -46,19 +47,26 @@ def _column(category: str):
     return getattr(MonthlyEmployeeSnapshot, category)
 
 
-def get_category_trend(
+def get_categories_trend(
     db: Session,
-    category: str,
+    categories: list[str],
     months: list[str] | None = None,
     department: ScopeValue = None,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
 ) -> list[dict]:
-    col = _column(category)
+    """PRD V1.7 §3.1: 薪资类目页面从单选改为多选 - one grouped query returns
+    every requested category's monthly total side by side (same headcount
+    denominator for all of them), instead of one round trip per category
+    that could return a different set of months per category and force the
+    caller to reconcile them. Also backs the page's "两点比较" mode: the
+    caller just picks out the two rows matching start/end month from the
+    same response instead of a second endpoint."""
+    cols = [_column(c) for c in categories]
     q = db.query(
         MonthlyEmployeeSnapshot.month,
         func.count(MonthlyEmployeeSnapshot.id).label("headcount"),
-        func.sum(col).label("total"),
+        *[func.sum(c) for c in cols],
     ).filter(MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
     if months:
         q = q.filter(MonthlyEmployeeSnapshot.month.in_(months))
@@ -67,15 +75,17 @@ def get_category_trend(
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
-    return [
-        {
-            "month": month,
-            "headcount": headcount,
-            "total": total or 0.0,
-            "avg": (total or 0.0) / headcount if headcount else 0.0,
-        }
-        for month, headcount, total in q.all()
-    ]
+    results = []
+    for row in q.all():
+        month, headcount, *totals = row
+        results.append(
+            {
+                "month": month,
+                "headcount": headcount,
+                "categories": {cat: (total or 0.0) for cat, total in zip(categories, totals)},
+            }
+        )
+    return results
 
 
 def compare_departments_by_category(

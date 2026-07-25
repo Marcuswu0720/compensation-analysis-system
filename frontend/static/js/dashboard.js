@@ -6,6 +6,7 @@ const STATUS_LABEL = { pending_review: '待确认', confirmed: '已入库', reje
 let currentBatchId = null;
 let trendChart = null;
 let currentUserRole = null;
+let metaCategories = []; // [{value, label}] - cached from /api/meta, see populateMeta()
 
 // ---------- shell: tabs + whoami ----------
 async function initShell() {
@@ -228,6 +229,7 @@ function initUploadTab() {
 // ---------- meta (departments / entities / months) ----------
 async function populateMeta() {
   const meta = await apiJson('/api/meta');
+  metaCategories = meta.categories;
   const fillSelect = (id, values, withEmpty) => {
     const el = document.getElementById(id);
     const current = el.value;
@@ -236,19 +238,11 @@ async function populateMeta() {
   };
   fillSelect('trendDept', meta.departments, true);
   fillSelect('trendEntity', meta.entities, true);
-  fillSelect('attrDept', meta.departments, true);
-  fillSelect('attrEntity', meta.entities, true);
   fillSelect('trendStart', meta.months, false);
   fillSelect('trendEnd', meta.months, false);
-  fillSelect('attrPrev', meta.months, false);
-  fillSelect('attrCur', meta.months, false);
   if (meta.months.length) {
     document.getElementById('trendStart').value = meta.months[0];
     document.getElementById('trendEnd').value = meta.months[meta.months.length - 1];
-    if (meta.months.length >= 2) {
-      document.getElementById('attrPrev').value = meta.months[meta.months.length - 2];
-      document.getElementById('attrCur').value = meta.months[meta.months.length - 1];
-    }
   }
 
   const fillCategorySelect = (id) => {
@@ -257,8 +251,8 @@ async function populateMeta() {
     el.innerHTML = meta.categories.map((c) => `<option value="${c.value}">${c.label}</option>`).join('');
     if (meta.categories.some((c) => c.value === current)) el.value = current;
   };
-  fillCategorySelect('catTrendCategory');
   fillCategorySelect('catCompareCategory');
+  renderCatTrendCategoryChecklist(meta.categories);
 
   fillSelect('catTrendDept', meta.departments, true);
   fillSelect('catTrendEntity', meta.entities, true);
@@ -373,59 +367,198 @@ function renderTrend(rows) {
     .join('');
 }
 
-function initTrendTab() {
-  document.getElementById('trendQueryBtn').addEventListener('click', async () => {
-    const rows = await apiPost('/api/trend', {
-      department: document.getElementById('trendDept').value || null,
-      entity: document.getElementById('trendEntity').value || null,
-      start_month: document.getElementById('trendStart').value || null,
-      end_month: document.getElementById('trendEnd').value || null,
-    });
-    renderTrend(rows);
-  });
+function currentTrendMode() {
+  return document.querySelector('input[name="trendMode"]:checked').value;
+}
 
-  document.getElementById('attrQueryBtn').addEventListener('click', async () => {
-    const prev = document.getElementById('attrPrev').value;
-    const cur = document.getElementById('attrCur').value;
-    const resultEl = document.getElementById('attrResult');
-    if (prev >= cur) {
-      resultEl.innerHTML = '<div class="error">对比月份 A 必须早于 B</div>';
-      return;
+function updateTrendModeVisibility() {
+  const isCompare = currentTrendMode() === 'compare';
+  document.getElementById('trendTrendResult').style.display = isCompare ? 'none' : '';
+  document.getElementById('trendCompareResult').style.display = isCompare ? '' : 'none';
+}
+
+// PRD V1.7 §1: "两点比较模式" is not a second implementation of attribution -
+// it's the exact same /api/attribution endpoint (compute_attribution already
+// supports any two months, not just adjacent ones) that the trend page's
+// filters now call directly, instead of duplicating the diff logic here.
+function initTrendTab() {
+  document.querySelectorAll('input[name="trendMode"]').forEach((r) => r.addEventListener('change', updateTrendModeVisibility));
+  updateTrendModeVisibility();
+
+  document.getElementById('trendQueryBtn').addEventListener('click', async () => {
+    const errEl = document.getElementById('trendError');
+    errEl.textContent = '';
+    const department = document.getElementById('trendDept').value || null;
+    const entity = document.getElementById('trendEntity').value || null;
+    const start = document.getElementById('trendStart').value;
+    const end = document.getElementById('trendEnd').value;
+
+    try {
+      if (currentTrendMode() === 'trend') {
+        const rows = await apiPost('/api/trend', { department, entity, start_month: start || null, end_month: end || null });
+        renderTrend(rows);
+      } else {
+        if (!start || !end || start >= end) {
+          errEl.textContent = '两点比较模式下，起始月份必须早于结束月份';
+          return;
+        }
+        const r = await apiPost('/api/attribution', { department, entity, prev_month: start, cur_month: end });
+        renderAttribution(r);
+      }
+    } catch (e) {
+      errEl.textContent = e.message;
     }
-    const r = await apiPost('/api/attribution', {
-      department: document.getElementById('attrDept').value || null,
-      entity: document.getElementById('attrEntity').value || null,
-      prev_month: prev,
-      cur_month: cur,
-    });
-    renderAttribution(r);
   });
 }
 
 // ---------- salary categories tab ----------
 let catTrendChart = null;
+let catTrendCache = []; // last /api/category-trend response, re-rendered on view-toggle without refetching
+let catTrendCacheMeta = []; // [{value, label}] for the categories in catTrendCache
+
+const CAT_TREND_COLORS = ['#2f6fed', '#1e9e63', '#e08a2b', '#c0392b', '#8e44ad', '#16a085', '#7f8c8d', '#d35400', '#2980b9', '#27ae60'];
+
+function renderCatTrendCategoryChecklist(categories) {
+  const container = document.getElementById('catTrendCategoryChecklist');
+  const previouslyChecked = new Set(Array.from(container.querySelectorAll('input:checked')).map((cb) => cb.value));
+  const isFirstRender = container.children.length === 0;
+  container.innerHTML = categories
+    .map((c) => `<label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" value="${c.value}"> ${c.label}</label>`)
+    .join('');
+  container.querySelectorAll('input').forEach((cb, idx) => {
+    cb.checked = isFirstRender ? idx < 2 : previouslyChecked.has(cb.value);
+  });
+}
+
+function selectedCatTrendCategories() {
+  return Array.from(document.querySelectorAll('#catTrendCategoryChecklist input:checked')).map((cb) => cb.value);
+}
+
+function currentCatTrendMode() {
+  return document.querySelector('input[name="catTrendMode"]:checked').value;
+}
+
+function currentCatTrendView() {
+  return document.querySelector('input[name="catTrendView"]:checked').value;
+}
+
+function updateCatTrendModeVisibility() {
+  const isCompare = currentCatTrendMode() === 'compare';
+  document.getElementById('catTrendTrendResult').style.display = isCompare ? 'none' : '';
+  document.getElementById('catTrendCompareResult').style.display = isCompare ? '' : 'none';
+  document.getElementById('catTrendViewToggleWrap').style.display = isCompare ? 'none' : '';
+}
+
+// Shared by the trend view's percentage mode and the two-point comparison
+// table's 涨跌幅 column (PRD V1.7 §3.3): a 0 baseline can't produce a
+// meaningful percentage, so both callers show "新增" instead of dividing by
+// zero - written once so the two views can't disagree on this edge case.
+function pctChange(baseline, current) {
+  if (!baseline) return current ? { isNew: true, pct: null } : { isNew: false, pct: 0 };
+  return { isNew: false, pct: ((current - baseline) / baseline) * 100 };
+}
+
+function pctChangeLabel(baseline, current) {
+  const { isNew, pct } = pctChange(baseline, current);
+  if (isNew) return '新增';
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+}
+
+function renderCatTrendChartAndTable(rows, categoryMeta) {
+  const view = currentCatTrendView();
+  const labels = rows.map((r) => r.month);
+
+  const datasets = categoryMeta.map((c, idx) => {
+    const raw = rows.map((r) => r.categories[c.value] ?? 0);
+    const data = view === 'pct' ? raw.map((v) => pctChange(raw[0], v).pct) : raw;
+    const color = CAT_TREND_COLORS[idx % CAT_TREND_COLORS.length];
+    return { label: c.label, data, borderColor: color, backgroundColor: color + '26', tension: 0.25, spanGaps: true };
+  });
+
+  if (catTrendChart) catTrendChart.destroy();
+  catTrendChart = new Chart(document.getElementById('catTrendChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: { scales: { y: { title: { display: true, text: view === 'pct' ? '相对起始月涨跌 (%)' : '金额 (₦)' } } } },
+  });
+
+  document.getElementById('catTrendTableHead').innerHTML =
+    `<tr><th>月份</th><th>人数</th>${categoryMeta.map((c) => `<th>${c.label}</th>`).join('')}</tr>`;
+  document.querySelector('#catTrendTable tbody').innerHTML = rows
+    .map((r) => {
+      const cells = categoryMeta
+        .map((c) => {
+          const raw = r.categories[c.value] ?? 0;
+          if (view === 'absolute') return `<td>${fmtMoney(raw)}</td>`;
+          const baseline = rows[0].categories[c.value] ?? 0;
+          return `<td>${pctChangeLabel(baseline, raw)}</td>`;
+        })
+        .join('');
+      return `<tr><td>${r.month}</td><td>${fmtInt(r.headcount)}</td>${cells}</tr>`;
+    })
+    .join('');
+}
+
+function renderCatCompareTable(rows, categoryMeta, startMonth, endMonth) {
+  const startRow = rows.find((r) => r.month === startMonth);
+  const endRow = rows.find((r) => r.month === endMonth);
+  document.querySelector('#catCompareTwoPointTable tbody').innerHTML = categoryMeta
+    .map((c) => {
+      if (!startRow || !endRow) {
+        return `<tr><td>${c.label}</td><td colspan="4" class="muted">起始月或结束月在所选范围内没有数据</td></tr>`;
+      }
+      const startVal = startRow.categories[c.value] ?? 0;
+      const endVal = endRow.categories[c.value] ?? 0;
+      const diff = endVal - startVal;
+      return `<tr><td>${c.label}</td><td>${fmtMoney(startVal)}</td><td>${fmtMoney(endVal)}</td><td>${diff >= 0 ? '+' : ''}${fmtMoney(diff)}</td><td>${pctChangeLabel(startVal, endVal)}</td></tr>`;
+    })
+    .join('');
+}
 
 function initCategoryTab() {
+  document.querySelectorAll('input[name="catTrendMode"]').forEach((r) => r.addEventListener('change', updateCatTrendModeVisibility));
+  document.querySelectorAll('input[name="catTrendView"]').forEach((r) =>
+    r.addEventListener('change', () => {
+      if (catTrendCache.length) renderCatTrendChartAndTable(catTrendCache, catTrendCacheMeta);
+    })
+  );
+  updateCatTrendModeVisibility();
+
   document.getElementById('catTrendQueryBtn').addEventListener('click', async () => {
-    const rows = await apiPost('/api/category-trend', {
-      category: document.getElementById('catTrendCategory').value,
-      department: document.getElementById('catTrendDept').value || null,
-      entity: document.getElementById('catTrendEntity').value || null,
-      start_month: document.getElementById('catTrendStart').value || null,
-      end_month: document.getElementById('catTrendEnd').value || null,
-    });
-    const labels = rows.map((r) => r.month);
-    if (catTrendChart) catTrendChart.destroy();
-    catTrendChart = new Chart(document.getElementById('catTrendChart'), {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{ label: '类目总额 (₦)', data: rows.map((r) => r.total), borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.15)', tension: 0.25 }],
-      },
-    });
-    document.querySelector('#catTrendTable tbody').innerHTML = rows
-      .map((r) => `<tr><td>${r.month}</td><td>${fmtInt(r.headcount)}</td><td>${fmtMoney(r.total)}</td><td>${fmtMoney(r.avg)}</td></tr>`)
-      .join('');
+    const errEl = document.getElementById('catTrendError');
+    errEl.textContent = '';
+    const categories = selectedCatTrendCategories();
+    if (categories.length === 0) {
+      errEl.textContent = '请至少勾选一个薪资类目';
+      return;
+    }
+    const start = document.getElementById('catTrendStart').value;
+    const end = document.getElementById('catTrendEnd').value;
+    if (currentCatTrendMode() === 'compare' && (!start || !end || start >= end)) {
+      errEl.textContent = '两点比较模式下，起始月份必须早于结束月份';
+      return;
+    }
+
+    try {
+      const rows = await apiPost('/api/category-trend', {
+        categories,
+        department: document.getElementById('catTrendDept').value || null,
+        entity: document.getElementById('catTrendEntity').value || null,
+        start_month: start || null,
+        end_month: end || null,
+      });
+      const categoryMeta = categories.map((v) => metaCategories.find((c) => c.value === v)).filter(Boolean);
+      catTrendCache = rows;
+      catTrendCacheMeta = categoryMeta;
+
+      if (currentCatTrendMode() === 'trend') {
+        renderCatTrendChartAndTable(rows, categoryMeta);
+      } else {
+        renderCatCompareTable(rows, categoryMeta, start, end);
+      }
+    } catch (e) {
+      errEl.textContent = e.message;
+    }
   });
 
   document.getElementById('catCompareQueryBtn').addEventListener('click', async () => {

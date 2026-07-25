@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..compute.attribution import compute_attribution, flatten_attribution
-from ..compute.categories import CATEGORY_FIELDS, compare_departments_by_category, get_category_trend, get_cost_composition
+from ..compute.categories import CATEGORY_FIELDS, compare_departments_by_category, get_categories_trend, get_cost_composition
 from ..compute.trends import get_trend, list_available_months, list_departments, list_entities
 from ..database import get_db
 from ..models import User
@@ -60,6 +60,8 @@ def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user
 
 @router.post("/category-trend")
 def category_trend(payload: CategoryTrendRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if not payload.categories:
+        raise HTTPException(status_code=400, detail="请至少选择一个薪资类目")
     scope = get_allowed_scope(db, user)
     department, entity = resolve_requested_filters(scope, payload.department, payload.entity)
     months = None
@@ -67,8 +69,8 @@ def category_trend(payload: CategoryTrendRequest, db: Session = Depends(get_db),
         available = list_available_months(db)
         months = [m for m in available if payload.start_month <= m <= payload.end_month]
     try:
-        return get_category_trend(
-            db, category=payload.category, months=months, department=department, entity=entity, scope_rules=scope.rules
+        return get_categories_trend(
+            db, categories=payload.categories, months=months, department=department, entity=entity, scope_rules=scope.rules
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

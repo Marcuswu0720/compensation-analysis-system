@@ -35,7 +35,7 @@ class ReassignMonthRequest(BaseModel):
 
 
 class CategoryTrendRequest(BaseModel):
-    category: str
+    categories: list[str]
     department: str | None = None
     entity: str | None = None
     start_month: str | None = None

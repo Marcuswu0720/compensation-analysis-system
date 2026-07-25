@@ -105,8 +105,18 @@
           <button id="trendQueryBtn">查询</button>
         </div>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+          <input type="radio" name="trendMode" id="trendModeTrend" value="trend" checked> 趋势模式（起始月到结束月之间所有月份的连续折线图）
+        </label>
+        <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:16px;">
+          <input type="radio" name="trendMode" id="trendModeCompare" value="compare"> 两点比较模式（只看起始月和结束月，不要求相邻，展示完整归因拆解）
+        </label>
+      </div>
+      <div class="error" id="trendError"></div>
     </div>
-    <div class="card" style="margin-top:16px;">
+
+    <div class="card" style="margin-top:16px;" id="trendTrendResult">
       <canvas id="trendChart" height="90"></canvas>
       <table id="trendTable">
         <thead><tr><th>月份</th><th>在职人数（含当月内离职）</th><th>总HR Cost (₦)</th><th>人均HR Cost (₦)</th></tr></thead>
@@ -114,42 +124,23 @@
       </table>
     </div>
 
-    <div class="card" style="margin-top:16px;">
-      <h3>环比归因</h3>
-      <div class="row">
-        <div>
-          <label>部门（不选=全公司）</label>
-          <select id="attrDept"><option value="">全部</option></select>
-        </div>
-        <div>
-          <label>实体（不选=全部）</label>
-          <select id="attrEntity"><option value="">全部</option></select>
-        </div>
-        <div>
-          <label>对比月份 A（早）</label>
-          <select id="attrPrev"></select>
-        </div>
-        <div>
-          <label>对比月份 B（晚）</label>
-          <select id="attrCur"></select>
-        </div>
-        <div style="flex:0;">
-          <button id="attrQueryBtn">归因分析</button>
-        </div>
-      </div>
-      <div id="attrResult" style="margin-top:16px;"></div>
+    <div class="card" style="margin-top:16px;display:none;" id="trendCompareResult">
+      <h3>两点比较 — 归因拆解</h3>
+      <div id="attrResult"></div>
     </div>
   </div>
 
   <!-- 薪资类目 -->
   <div class="tab-panel" id="tab-categories">
     <div class="card">
-      <h3>类目趋势</h3>
+      <h3>类目趋势 / 两点比较</h3>
       <div class="row">
-        <div>
-          <label>薪资类目</label>
-          <select id="catTrendCategory"></select>
+        <div style="flex:3;">
+          <label>薪资类目（可多选）</label>
+          <div id="catTrendCategoryChecklist" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;"></div>
         </div>
+      </div>
+      <div class="row" style="margin-top:8px;">
         <div>
           <label>部门（不选=全公司）</label>
           <select id="catTrendDept"><option value="">全部</option></select>
@@ -170,11 +161,38 @@
           <button id="catTrendQueryBtn">查询</button>
         </div>
       </div>
-      <canvas id="catTrendChart" height="90" style="margin-top:16px;"></canvas>
-      <table id="catTrendTable">
-        <thead><tr><th>月份</th><th>人数</th><th>类目总额 (₦)</th><th>人均 (₦)</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="row" style="margin-top:8px;">
+        <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+          <input type="radio" name="catTrendMode" id="catTrendModeTrend" value="trend" checked> 趋势模式
+        </label>
+        <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:16px;">
+          <input type="radio" name="catTrendMode" id="catTrendModeCompare" value="compare"> 两点比较模式
+        </label>
+        <span id="catTrendViewToggleWrap" style="margin-left:24px;">
+          视图：
+          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+            <input type="radio" name="catTrendView" id="catTrendViewAbs" value="absolute" checked> 绝对金额
+          </label>
+          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:8px;">
+            <input type="radio" name="catTrendView" id="catTrendViewPct" value="pct"> 增长百分比（以起始月为基准）
+          </label>
+        </span>
+      </div>
+      <div class="error" id="catTrendError"></div>
+
+      <div id="catTrendTrendResult">
+        <canvas id="catTrendChart" height="90" style="margin-top:16px;"></canvas>
+        <table id="catTrendTable" style="margin-top:16px;">
+          <thead id="catTrendTableHead"></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="catTrendCompareResult" style="display:none;">
+        <table id="catCompareTwoPointTable" style="margin-top:16px;">
+          <thead><tr><th>类目</th><th>起始月金额 (₦)</th><th>结束月金额 (₦)</th><th>差值 (₦)</th><th>涨跌幅</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="card" style="margin-top:16px;">

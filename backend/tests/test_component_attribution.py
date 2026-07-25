@@ -1,5 +1,5 @@
 from app.compute.attribution import compute_attribution
-from app.compute.categories import compare_departments_by_category, get_category_trend, get_cost_composition
+from app.compute.categories import compare_departments_by_category, get_categories_trend, get_cost_composition
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
 
@@ -85,8 +85,8 @@ def test_no_anomaly_when_formal_raise_happens_in_official_window(db_session):
 def test_category_trend_and_composition_use_real_column_names(db_session):
     _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
 
-    trend = get_category_trend(db_session, "basic_salary_actual", months=["2026-01"])
-    assert trend[0]["total"] == 100000 + 50000 + 80000
+    trend = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"])
+    assert trend[0]["categories"]["basic_salary_actual"] == 100000 + 50000 + 80000
     assert trend[0]["headcount"] == 3
 
     comparison = compare_departments_by_category(db_session, "overtime_amount", "2026-01")
@@ -98,3 +98,25 @@ def test_category_trend_and_composition_use_real_column_names(db_session):
     assert composition["hr_cost"] == total_hr_cost
     basic_pct = next(c for c in composition["categories"] if c["category"] == "basic_salary_actual")["pct"]
     assert abs(basic_pct - (230000 / total_hr_cost * 100)) < 0.01
+
+
+def test_get_categories_trend_returns_multiple_categories_side_by_side(db_session):
+    """PRD V1.7 §3.1: 薪资类目页面从单选改为多选 - one call must return every
+    requested category's total for the same month/headcount, not force N
+    separate round trips that could disagree on which months exist."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+    _confirm(db_session, "2026-03", MONTH2_EMPLOYEES)
+
+    trend = get_categories_trend(db_session, ["basic_salary_actual", "performance_bonus"], months=["2026-01", "2026-03"])
+    assert [r["month"] for r in trend] == ["2026-01", "2026-03"]
+    assert trend[0]["headcount"] == 3
+    assert trend[0]["categories"] == {"basic_salary_actual": 230000, "performance_bonus": 35000}
+    assert trend[1]["categories"] == {"basic_salary_actual": 245000, "performance_bonus": 40000}
+
+
+def test_get_categories_trend_rejects_unknown_category(db_session):
+    try:
+        get_categories_trend(db_session, ["not_a_real_category"])
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "not_a_real_category" in str(e)
