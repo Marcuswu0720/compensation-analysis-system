@@ -123,6 +123,14 @@ def _insert_base(db: Session, batch: UploadBatch, payload: dict) -> None:
                 resign_or_exit_date=e["resign_or_exit_date"],
                 source_sheet=e["source_sheet"],
                 upload_batch_id=batch.id,
+                department2=e.get("department2"),
+                department3=e.get("department3"),
+                position=e.get("position"),
+                reporting_line=e.get("reporting_line"),
+                state=e.get("state"),
+                work_station=e.get("work_station"),
+                joining_date=e.get("joining_date"),
+                full_detail_json=e.get("full_detail_json"),
             )
         )
 
@@ -174,6 +182,22 @@ def _insert_supplemental(db: Session, batch: UploadBatch, payload: dict) -> None
                 source_sheet=e["source_sheet"],
                 matched_base_employee=e["matched_base_employee"],
                 upload_batch_id=batch.id,
+                # PRD V1.6: only present for pay_type='bonus' entries (see
+                # ingestion/bonus_batch.py) - backpay entries don't have
+                # these keys in their staged payload, so .get() leaves them
+                # NULL rather than raising.
+                department2=e.get("department2"),
+                department3=e.get("department3"),
+                position=e.get("position"),
+                reporting_line=e.get("reporting_line"),
+                job_grade=e.get("job_grade"),
+                cost_center=e.get("cost_center"),
+                work_country=e.get("work_country"),
+                state=e.get("state"),
+                work_station=e.get("work_station"),
+                joining_date=e.get("joining_date"),
+                resign_date=e.get("resign_date"),
+                full_detail_json=e.get("full_detail_json"),
             )
         )
 

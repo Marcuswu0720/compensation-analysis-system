@@ -1,4 +1,9 @@
-"""Employee-level salary detail rows for the Excel export (PRD V1.3).
+"""Employee-level salary detail rows for the Excel export (PRD V1.3, fully
+reworked by PRD V1.6 to cover the complete field templates instead of the
+~17 analysis columns V1.5 was limited to - see ingestion/full_fields.py for
+why those extra ~20 columns never made it into the database in the first
+place, and models.py's MonthlyEmployeeSnapshot/SupplementalPaySnapshot for
+where they're now stored).
 
 Deliberately reuses the exact same permission primitives as every other
 compute/*.py query (`apply_scope_filter` for the caller's explicit
@@ -8,47 +13,48 @@ NOT invent a separate "match department1 by string" filter, since that is
 exactly the cross-entity leak V1.2 closed.
 """
 
+import json
+
 from sqlalchemy.orm import Session
 
+from ..ingestion.full_fields import BONUS_FIELDS, CONTRACT_FIELDS, FORMAL_FIELDS, export_header
 from ..models import MonthlyEmployeeSnapshot, SupplementalPaySnapshot
 from .scope import ScopeRule, apply_permission_scope, apply_scope_filter
 
 ScopeValue = str | list[str] | None
 
-EMPLOYMENT_TYPE_LABEL = {"Formal": "正式工", "Contract": "合同工"}
 SALARY_TYPE_LABEL = {"base": "底薪批次", "bonus": "奖金批次", "backpay": "补发批次"}
 SALARY_TYPES = ("base", "bonus", "backpay")
 
-EXPORT_COLUMNS = [
-    ("month", "月份"),
-    ("entity", "实体"),
-    ("department1", "部门"),
-    ("staff_name", "员工姓名"),
-    ("staff_id", "员工工号"),
-    ("employment_type_label", "用工类型"),
-    ("job_grade", "职级"),
-    ("basic_salary_actual", "实发底薪"),
-    ("performance_bonus", "绩效薪资"),
-    ("commission_bonus", "奖金/提成"),
-    ("overtime_amount", "加班薪资"),
-    ("other_income", "其他收入"),
-    ("gross_salary", "税前薪资合计"),
-    ("employer_statutory_cost", "雇主承担社保成本"),
-    ("hr_cost", "人力成本 HR Cost"),
-    ("deduction_total", "扣款合计"),
-    ("net_pay", "实发到手"),
-    ("status_label", "在职状态"),
-]
+# "Month"/"Entity" are convenience columns prepended to every detail sheet
+# for readability across a multi-month export - NOT part of the PRD V1.6
+# field templates (neither Entity nor a month column appears in any of the
+# three field lists), so they're excluded from the 37/29/26 self-check in
+# routers/export.py on purpose. Still given the same bilingual header format
+# as every other export column per PRD V1.6's "no exceptions" rule.
+_CONVENIENCE_COLUMNS = [("month", "Month（月份）"), ("entity", "Entity（实体）")]
 
-SUPPLEMENTAL_EXPORT_COLUMNS = [
-    ("month", "月份"),
-    ("batch_type_label", "批次类型"),
-    ("entity", "实体"),
-    ("department1", "部门"),
-    ("staff_name", "员工姓名"),
-    ("staff_id", "员工工号"),
-    ("amount", "金额"),
-    ("matched_label", "是否关联到底薪批次在职员工"),
+
+def formal_sheet_columns() -> list[tuple[str, str]]:
+    return _CONVENIENCE_COLUMNS + [(s.key, export_header(s)) for s in FORMAL_FIELDS]
+
+
+def contract_sheet_columns() -> list[tuple[str, str]]:
+    return _CONVENIENCE_COLUMNS + [(s.key, export_header(s)) for s in CONTRACT_FIELDS]
+
+
+def bonus_sheet_columns() -> list[tuple[str, str]]:
+    return _CONVENIENCE_COLUMNS + [(s.key, export_header(s)) for s in BONUS_FIELDS]
+
+
+BACKPAY_EXPORT_COLUMNS = [
+    ("month", "Month（月份）"),
+    ("entity", "Entity（实体）"),
+    ("department1", "Department 1（一级部门）"),
+    ("staff_name", "Staff Name（员工姓名）"),
+    ("staff_id", "Staff ID（员工工号）"),
+    ("amount", "Amount（金额）"),
+    ("matched_label", "Matched（是否关联到底薪批次在职员工）"),
 ]
 
 
@@ -97,108 +103,125 @@ def build_department_category_summary(employees: list[dict]) -> list[dict]:
     return sorted(groups.values(), key=lambda g: (g["entity"] or "", g["department1"] or ""))
 
 
-def get_employee_detail_rows(
+def _base_row_to_dict(r: MonthlyEmployeeSnapshot) -> dict:
+    detail = json.loads(r.full_detail_json) if r.full_detail_json else {}
+    return {
+        "month": r.month,
+        "entity": r.entity,
+        "employment_type": r.employment_type,
+        "staff_id": r.staff_id,
+        "staff_name": r.staff_name,
+        "department1": r.department1,
+        "department2": r.department2,
+        "department3": r.department3,
+        "position": r.position,
+        "reporting_line": r.reporting_line,
+        "job_grade": r.job_grade,
+        "state": r.state,
+        "work_station": r.work_station,
+        "joining_date": r.joining_date,
+        "resign_date": r.resign_or_exit_date,
+        "basic_salary_actual": r.basic_salary_actual,
+        "performance_std": r.performance_std,
+        "performance_coefficient": r.performance_coefficient,
+        "performance_bonus": r.performance_bonus,
+        "commission_bonus": r.commission_bonus,
+        "overtime_amount": r.overtime_amount,
+        "gross_salary": r.gross_salary,
+        "net_pay": r.net_pay,
+        "hr_cost": r.hr_cost,
+        **detail,
+    }
+
+
+def get_base_full_detail_rows(
     db: Session,
     months: list[str],
     department: ScopeValue = None,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
-    fold_supplemental: bool = True,
-) -> tuple[list[dict], dict[str, float]]:
-    """Returns (rows, unattributed_supplemental_by_month). Each row is one
-    employee's one month.
-
-    fold_supplemental=True (the original V1.3 behaviour) folds any
-    bonus/backpay pay matched to that staff_id that month into hr_cost -
-    same reconciliation approach as compute/attribution.py's _fetch_scope,
-    so totals agree with the dashboard rather than under-reporting cost for
-    anyone paid through a standalone bonus/backpay file. Supplemental pay
-    that can't be matched to anyone in the exported scope is never silently
-    dropped - it comes back as unattributed_supplemental_by_month.
-
-    fold_supplemental=False (PRD V1.5 §2.1) leaves hr_cost as the pure
-    底薪批次 figure - used when the caller wants base data reported strictly
-    on its own, with bonus/backpay shown separately via
-    get_supplemental_detail_rows() instead of blended in."""
+) -> list[dict]:
+    """One row per employee per month, with every PRD V1.6 field populated
+    (from MonthlyEmployeeSnapshot's dedicated columns plus its
+    full_detail_json blob) - the caller picks FORMAL_FIELDS or
+    CONTRACT_FIELDS to know which keys/order to render for a given row's
+    employment_type. hr_cost here is always the pure 底薪批次 figure - PRD
+    V1.5 already established that bonus/backpay show up in their own sheet,
+    never folded in here."""
     q = db.query(MonthlyEmployeeSnapshot).filter(
         MonthlyEmployeeSnapshot.month.in_(months), MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
     )
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
-    employee_rows = q.order_by(
+    rows = q.order_by(
         MonthlyEmployeeSnapshot.month, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, MonthlyEmployeeSnapshot.staff_name
     ).all()
-
-    supplemental_by_key: dict[tuple[str, str], float] = {}
-    unattributed_by_month: dict[str, float] = {}
-    if fold_supplemental:
-        supq = db.query(SupplementalPaySnapshot).filter(
-            SupplementalPaySnapshot.month.in_(months), SupplementalPaySnapshot.is_deleted == False  # noqa: E712
-        )
-        supq = apply_scope_filter(supq, SupplementalPaySnapshot.department1, department)
-        supq = apply_scope_filter(supq, SupplementalPaySnapshot.entity, entity)
-        supq = apply_permission_scope(supq, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
-
-        employee_keys = {(r.month, r.staff_id) for r in employee_rows}
-        for row in supq.all():
-            key = (row.month, row.staff_id)
-            if key in employee_keys:
-                supplemental_by_key[key] = supplemental_by_key.get(key, 0.0) + row.amount
-            else:
-                unattributed_by_month[row.month] = unattributed_by_month.get(row.month, 0.0) + row.amount
-
-    rows = []
-    for r in employee_rows:
-        supplemental = supplemental_by_key.get((r.month, r.staff_id), 0.0)
-        if r.is_active:
-            status_label = "在职"
-        else:
-            status_label = f"已离职（{r.resign_or_exit_date}）" if r.resign_or_exit_date else "已离职"
-        rows.append(
-            {
-                "month": r.month,
-                "entity": r.entity,
-                "department1": r.department1,
-                "staff_name": r.staff_name,
-                "staff_id": r.staff_id,
-                "employment_type": r.employment_type,
-                "employment_type_label": EMPLOYMENT_TYPE_LABEL.get(r.employment_type, r.employment_type),
-                "job_grade": r.job_grade,
-                "basic_salary_actual": r.basic_salary_actual or 0.0,
-                "performance_bonus": r.performance_bonus or 0.0,
-                "commission_bonus": r.commission_bonus or 0.0,
-                "overtime_amount": r.overtime_amount or 0.0,
-                "other_income": r.other_income or 0.0,
-                "gross_salary": r.gross_salary or 0.0,
-                "employer_statutory_cost": r.employer_statutory_cost or 0.0,
-                "hr_cost": (r.hr_cost or 0.0) + supplemental,
-                "deduction_total": r.deduction_total or 0.0,
-                "net_pay": r.net_pay or 0.0,
-                "status_label": status_label,
-            }
-        )
-    return rows, unattributed_by_month
+    return [_base_row_to_dict(r) for r in rows]
 
 
-def get_supplemental_detail_rows(
+def get_bonus_detail_rows(
     db: Session,
     months: list[str],
-    pay_types: list[str],
     department: ScopeValue = None,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
 ) -> list[dict]:
-    """Raw 奖金/补发批次 entries (PRD V1.5 §2.1/§2.4) - these never had a full
-    salary-component breakdown (see ingestion/supplemental.py), so unlike
-    base rows they're reported as their own simple sheet: who, how much,
-    which batch type, and whether it could be matched to a base-batch
-    employee - not folded into anyone's hr_cost here."""
-    if not pay_types:
-        return []
+    """The standalone 奖金批次 upload's full 26-field detail (PRD V1.6) - see
+    ingestion/bonus_batch.py. Distinct from get_backpay_detail_rows(), which
+    stays the deliberately simple shape backpay files use."""
     q = db.query(SupplementalPaySnapshot).filter(
         SupplementalPaySnapshot.month.in_(months),
-        SupplementalPaySnapshot.pay_type.in_(pay_types),
+        SupplementalPaySnapshot.pay_type == "bonus",
+        SupplementalPaySnapshot.is_deleted == False,  # noqa: E712
+    )
+    q = apply_scope_filter(q, SupplementalPaySnapshot.department1, department)
+    q = apply_scope_filter(q, SupplementalPaySnapshot.entity, entity)
+    q = apply_permission_scope(q, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
+    rows = q.order_by(SupplementalPaySnapshot.month, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1).all()
+
+    result = []
+    for r in rows:
+        detail = json.loads(r.full_detail_json) if r.full_detail_json else {}
+        result.append(
+            {
+                "month": r.month,
+                "entity": r.entity,
+                "staff_id": r.staff_id,
+                "staff_name": r.staff_name,
+                "department1": r.department1,
+                "department2": r.department2,
+                "department3": r.department3,
+                "position": r.position,
+                "reporting_line": r.reporting_line,
+                "job_grade": r.job_grade,
+                "cost_center": r.cost_center,
+                "work_country": r.work_country,
+                "state": r.state,
+                "work_station": r.work_station,
+                "joining_date": r.joining_date,
+                "resign_date": r.resign_date,
+                "hr_cost": r.amount,
+                **detail,
+            }
+        )
+    return result
+
+
+def get_backpay_detail_rows(
+    db: Session,
+    months: list[str],
+    department: ScopeValue = None,
+    entity: ScopeValue = None,
+    scope_rules: list[ScopeRule] | None = None,
+) -> list[dict]:
+    """补发批次 stays the simple staff_id+amount shape - confirmed with the
+    user (V1.5 §0.2) that backpay files really are just a loose list, not a
+    full payroll template like the standalone 奖金批次 upload turned out to
+    be (PRD V1.6's background section)."""
+    q = db.query(SupplementalPaySnapshot).filter(
+        SupplementalPaySnapshot.month.in_(months),
+        SupplementalPaySnapshot.pay_type == "backpay",
         SupplementalPaySnapshot.is_deleted == False,  # noqa: E712
     )
     q = apply_scope_filter(q, SupplementalPaySnapshot.department1, department)
@@ -209,7 +232,6 @@ def get_supplemental_detail_rows(
     return [
         {
             "month": r.month,
-            "batch_type_label": SALARY_TYPE_LABEL.get(r.pay_type, r.pay_type),
             "entity": r.entity,
             "department1": r.department1,
             "staff_name": r.staff_name,
@@ -219,6 +241,25 @@ def get_supplemental_detail_rows(
         }
         for r in rows
     ]
+
+
+EXPECTED_FIELD_COUNTS = {"正式工明细": 37, "合同工明细": 29, "奖金明细": 26}
+
+
+def verify_sheet_field_count(sheet_label: str, columns: list[tuple[str, str]]) -> None:
+    """PRD V1.6's single most-emphasized requirement ("本次迭代最重要的一条，
+    不是可选项"): before a structured sheet is written, check that its
+    column count - minus the two convenience columns that aren't part of
+    the PRD's field templates - exactly matches the PRD's own 37/29/26.
+    Raises loudly instead of letting an incomplete file go out the door
+    silently, which is the exact failure mode PRD V1.6 exists to fix (V1.5's
+    export silently had ~20 fewer columns than it should have)."""
+    expected = EXPECTED_FIELD_COUNTS[sheet_label]
+    actual = len(columns) - len(_CONVENIENCE_COLUMNS)
+    if actual != expected:
+        raise ValueError(
+            f"导出字段数量与规范不符，请检查：{sheet_label}应为 {expected} 个字段（不含月份/实体两个辅助列），实际拼出了 {actual} 个"
+        )
 
 
 def check_month_type_availability(

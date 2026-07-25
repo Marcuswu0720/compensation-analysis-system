@@ -1,6 +1,18 @@
 from fastapi import HTTPException
 
-from app.compute.export import get_employee_detail_rows, get_supplemental_detail_rows
+from app.compute.export import (
+    BACKPAY_EXPORT_COLUMNS,
+    BONUS_FIELDS,
+    CONTRACT_FIELDS,
+    FORMAL_FIELDS,
+    bonus_sheet_columns,
+    contract_sheet_columns,
+    formal_sheet_columns,
+    get_backpay_detail_rows,
+    get_base_full_detail_rows,
+    get_bonus_detail_rows,
+    verify_sheet_field_count,
+)
 from app.compute.scope import ScopeRule
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
@@ -36,10 +48,9 @@ def _make_user(db, username, role):
 
 def test_admin_export_sees_every_department_including_both_ops(db_session):
     _confirm(db_session, "2026-01", build_month1_workbook)
-    rows, unattributed = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=None)
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=None)
     staff_ids = {r["staff_id"] for r in rows}
     assert staff_ids == {"E001", "E002", "E003", "E004", "E005"}
-    assert unattributed == {}
 
 
 def test_entity_department_rule_excludes_same_named_department_in_other_entity(db_session):
@@ -49,7 +60,7 @@ def test_entity_department_rule_excludes_same_named_department_in_other_entity(d
     _confirm(db_session, "2026-01", build_month1_workbook)
     rules = [ScopeRule(entity="Flexi", department1="Ops")]
 
-    rows, _ = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=rules)
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=rules)
     assert [r["staff_id"] for r in rows] == ["E005"]
     assert rows[0]["staff_name"] == "Eve"
     assert rows[0]["entity"] == "Flexi"
@@ -58,41 +69,46 @@ def test_entity_department_rule_excludes_same_named_department_in_other_entity(d
 
 def test_zero_rules_exports_nothing(db_session):
     _confirm(db_session, "2026-01", build_month1_workbook)
-    rows, _ = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=[])
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=[])
     assert rows == []
 
 
-def test_matched_supplemental_pay_folds_into_hr_cost(db_session):
+def test_base_hr_cost_never_folds_in_supplemental_pay(db_session):
+    """PRD V1.5 §2 decided bonus/backpay must never be folded into base
+    hr_cost - each batch type is shown as itself, in its own sheet/function.
+    get_base_full_detail_rows only ever reflects the 底薪批次's own hr_cost."""
     _confirm(db_session, "2026-01", build_month1_workbook)
     _confirm(db_session, "2026-01", lambda: build_supplemental_workbook([("E001", "Alice", "Sales", 500)]), salary_type="backpay")
 
-    rows, unattributed = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=None)
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=None)
     alice = next(r for r in rows if r["staff_id"] == "E001")
-    assert alice["hr_cost"] == 1000 + 500  # Alice's base hr_cost (1000) + backpay
-    assert unattributed == {}
+    assert alice["hr_cost"] == 1000  # base hr_cost only, backpay is never folded in
 
 
-def test_unattributed_supplemental_reported_not_dropped(db_session):
+def test_backpay_rows_independent_of_base_match_status(db_session):
     _confirm(db_session, "2026-01", build_month1_workbook)
     _confirm(
         db_session,
         "2026-01",
-        lambda: build_supplemental_workbook([("GHOST", "Nobody", "Sales", 777)]),
+        lambda: build_supplemental_workbook([("E001", "Alice", "Sales", 500), ("GHOST", "Nobody", "Sales", 200)]),
         salary_type="backpay",
     )
 
-    rows, unattributed = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=None)
-    assert all(r["hr_cost"] not in (777,) for r in rows)  # not attached to any real employee
-    assert unattributed == {"2026-01": 777}
+    rows = get_backpay_detail_rows(db_session, months=["2026-01"], scope_rules=None)
+    assert len(rows) == 2
+    alice_row = next(r for r in rows if r["staff_id"] == "E001")
+    assert alice_row["matched_label"] == "是"
+    ghost_row = next(r for r in rows if r["staff_id"] == "GHOST")
+    assert ghost_row["matched_label"] == "否"
 
 
-def test_resigned_employee_status_label_includes_date(db_session):
+def test_base_rows_carry_resign_date_field(db_session):
     _confirm(db_session, "2026-01", build_month1_workbook)
-    rows, _ = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=None)
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=None)
     carol = next(r for r in rows if r["staff_id"] == "E003")
-    assert carol["status_label"] == "已离职（2026-01-20）"
+    assert carol["resign_date"] == "2026-01-20"
     alice = next(r for r in rows if r["staff_id"] == "E001")
-    assert alice["status_label"] == "在职"
+    assert alice["resign_date"] is None
 
 
 def test_export_endpoint_rejects_viewer_with_no_grants(db_session):
@@ -146,10 +162,10 @@ def test_build_workbook_watermark_sheet_and_data_sheets():
     import openpyxl
 
     workbook_bytes = _build_workbook(
-        [], [], ["base", "bonus", "backpay"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "Sales", "2026-01", "2026-01", []
+        [], [], [], ["base", "bonus", "backpay"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "Sales", "2026-01", "2026-01", []
     )
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    assert wb.sheetnames == ["说明", "正式工明细", "合同工明细", "奖金补发明细"]
+    assert wb.sheetnames == ["说明", "正式工明细", "合同工明细", "奖金明细", "补发明细"]
 
     info_rows = list(wb["说明"].iter_rows(values_only=True))
     assert info_rows[0][0] == "本文件由 marcus 于 2026-07-25 09:00:00 导出"
@@ -158,30 +174,29 @@ def test_build_workbook_watermark_sheet_and_data_sheets():
     assert "保密" in info_rows[3][0]
 
     formal_header = next(wb["正式工明细"].iter_rows(values_only=True))
-    assert formal_header[:5] == ("月份", "实体", "部门", "员工姓名", "员工工号")
-    assert "用工类型" not in formal_header  # implied by the sheet name, not repeated as a column
+    assert formal_header[:5] == ("Month（月份）", "Entity（实体）", "Staff ID（员工工号）", "Staff Name（员工姓名）", "Department 1（一级部门）")
 
 
-def test_build_workbook_only_base_selected_omits_supplemental_sheet():
+def test_build_workbook_only_base_selected_omits_other_sheets():
     import io
     from datetime import datetime
 
     import openpyxl
 
-    workbook_bytes = _build_workbook([], [], ["base"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
+    workbook_bytes = _build_workbook([], [], [], ["base"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
     assert wb.sheetnames == ["说明", "正式工明细", "合同工明细"]
 
 
-def test_build_workbook_only_bonus_selected_omits_base_sheets():
+def test_build_workbook_only_bonus_selected_omits_base_and_backpay_sheets():
     import io
     from datetime import datetime
 
     import openpyxl
 
-    workbook_bytes = _build_workbook([], [], ["bonus"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
+    workbook_bytes = _build_workbook([], [], [], ["bonus"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    assert wb.sheetnames == ["说明", "奖金补发明细"]
+    assert wb.sheetnames == ["说明", "奖金明细"]
 
 
 def test_build_workbook_discloses_missing_month_type_combos():
@@ -191,7 +206,7 @@ def test_build_workbook_discloses_missing_month_type_combos():
     import openpyxl
 
     workbook_bytes = _build_workbook(
-        [], [], ["base", "bonus"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "全公司", "全部部门", "2026-01", "2026-02",
+        [], [], [], ["base", "bonus"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "全公司", "全部部门", "2026-01", "2026-02",
         [("2026-02", "bonus")],
     )
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
@@ -208,24 +223,20 @@ def test_formal_contract_split_uses_employment_type(db_session):
     batch = stage_upload(db_session, month="2026-01", file_bytes=build_component_workbook("2026-01", employees), filename="m.xlsx", uploaded_by="t", salary_type="base")
     confirm_upload(db_session, batch, operator="tester")
 
-    rows, _ = get_employee_detail_rows(db_session, months=["2026-01"], scope_rules=None, fold_supplemental=False)
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=None)
     formal = [r for r in rows if r["employment_type"] == "Formal"]
     contract = [r for r in rows if r["employment_type"] != "Formal"]
     assert [r["staff_id"] for r in formal] == ["E001"]
     assert [r["staff_id"] for r in contract] == ["E002"]
 
 
-def test_get_supplemental_detail_rows_reports_batch_type_and_match_status(db_session):
+def test_get_bonus_detail_rows_reads_hr_cost_as_amount(db_session):
     _confirm(db_session, "2026-01", build_month1_workbook)
-    _confirm(db_session, "2026-01", lambda: build_supplemental_workbook([("E001", "Alice", "Sales", 500), ("GHOST", "Nobody", "Sales", 200)]), salary_type="backpay")
+    _confirm(db_session, "2026-01", lambda: build_supplemental_workbook([("E001", "Alice", "Sales", 500)], sheet_name="Bonus"), salary_type="bonus")
 
-    rows = get_supplemental_detail_rows(db_session, months=["2026-01"], pay_types=["backpay"], scope_rules=None)
-    assert len(rows) == 2
+    rows = get_bonus_detail_rows(db_session, months=["2026-01"], scope_rules=None)
     alice_row = next(r for r in rows if r["staff_id"] == "E001")
-    assert alice_row["batch_type_label"] == "补发批次"
-    assert alice_row["matched_label"] == "是"
-    ghost_row = next(r for r in rows if r["staff_id"] == "GHOST")
-    assert ghost_row["matched_label"] == "否"
+    assert alice_row["hr_cost"] == 500
 
 
 def test_export_endpoint_rejects_when_requested_month_type_has_no_data(db_session):
@@ -264,3 +275,92 @@ def test_export_endpoint_rejects_unknown_salary_type(db_session):
         assert False, "expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 400
+
+
+# --- PRD V1.6: bilingual "English（中文）" header format, no exceptions ---
+
+
+def test_every_detail_sheet_header_is_bilingual():
+    import re
+
+    bilingual_re = re.compile(r"^.+（.+）$")
+    for columns in (formal_sheet_columns(), contract_sheet_columns(), bonus_sheet_columns(), BACKPAY_EXPORT_COLUMNS):
+        for key, label in columns:
+            assert bilingual_re.match(label), f"{key!r} 的表头 {label!r} 不是「英文（中文）」双语格式"
+
+
+# --- PRD V1.6's field-count self-check ("本次迭代最重要的一条，不是可选项") ---
+
+
+def test_formal_sheet_columns_match_prd_field_count():
+    columns = formal_sheet_columns()
+    verify_sheet_field_count("正式工明细", columns)  # must not raise
+    assert len(columns) - 2 == 37 == len(FORMAL_FIELDS)
+
+
+def test_contract_sheet_columns_match_prd_field_count():
+    columns = contract_sheet_columns()
+    verify_sheet_field_count("合同工明细", columns)  # must not raise
+    assert len(columns) - 2 == 29 == len(CONTRACT_FIELDS)
+
+
+def test_bonus_sheet_columns_match_prd_field_count():
+    columns = bonus_sheet_columns()
+    verify_sheet_field_count("奖金明细", columns)  # must not raise
+    assert len(columns) - 2 == 26 == len(BONUS_FIELDS)
+
+
+def test_field_count_self_check_raises_loudly_on_mismatch():
+    """The whole point of the self-check: a sheet that's short a column must
+    error, not silently ship an incomplete file (exactly V1.5's bug)."""
+    short_columns = formal_sheet_columns()[:-1]  # drop one field
+    try:
+        verify_sheet_field_count("正式工明细", short_columns)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "导出字段数量与规范不符" in str(e)
+        assert "37" in str(e)
+
+
+def test_actual_exported_sheets_have_exactly_the_prd_column_counts(db_session):
+    """End-to-end smoke test (not just unit-testing the column-list helpers
+    in isolation): stage+confirm a real base batch through the full
+    ingestion pipeline, export it, and count the header cells actually
+    written to each sheet - this is what would have caught V1.5's ~20
+    missing columns."""
+    import io
+    from datetime import datetime
+
+    import openpyxl
+
+    _confirm(db_session, "2026-01", build_month1_workbook)
+
+    base_rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=None)
+    workbook_bytes = _build_workbook(
+        base_rows, [], [], ["base"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "全公司", "全部部门", "2026-01", "2026-01", []
+    )
+    wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
+
+    formal_header = next(wb["正式工明细"].iter_rows(values_only=True))
+    contract_header = next(wb["合同工明细"].iter_rows(values_only=True))
+    assert len(formal_header) - 2 == 37  # minus 月份/实体 convenience columns
+    assert len(contract_header) - 2 == 29
+
+
+def test_field_count_self_check_wired_into_workbook_build():
+    """The router must actually call the self-check while building the
+    workbook, not just leave it available as an unused helper."""
+    import app.routers.export as export_router_module
+
+    original = export_router_module.formal_sheet_columns
+    export_router_module.formal_sheet_columns = lambda: original()[:-1]
+    try:
+        from datetime import datetime
+
+        try:
+            _build_workbook([], [], [], ["base"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
+            assert False, "expected ValueError from the field-count self-check"
+        except ValueError as e:
+            assert "导出字段数量与规范不符" in str(e)
+    finally:
+        export_router_module.formal_sheet_columns = original

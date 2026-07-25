@@ -99,6 +99,25 @@ class MonthlyEmployeeSnapshot(Base):
     # compute/scope.py and ingestion/commit.py.
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # PRD V1.6: the original data model above only ever captured the fields
+    # the cost-analysis dashboard needs - Department 2/3, Position, State,
+    # attendance/deduction detail, etc. were dropped at parse time and never
+    # reached the database at all, which is why V1.5's "full detail export"
+    # came out ~20 columns short (see ingestion/full_fields.py). These
+    # descriptive fields are common/reusable enough to be real columns;
+    # everything else new (allowance breakdowns, attendance/deduction
+    # figures) goes into full_detail_json instead of ~15 more single-purpose
+    # nullable columns, since nothing in compute/*.py ever needs them - only
+    # the full-detail export does.
+    department2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department3: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reporting_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    work_station: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    joining_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    full_detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 class MonthlyBonusSnapshot(Base):
     __tablename__ = "monthly_bonus_snapshot"
@@ -122,10 +141,19 @@ class MonthlyBonusSnapshot(Base):
 
 class SupplementalPaySnapshot(Base):
     """Extra pay added on top of a month's base salary batch: a standalone
-    bonus-correction file, or a one-off backpay file (e.g. overtime backpay
-    sheets that don't fit the standard Formal/Contract shape). Kept separate
-    from monthly_employee_snapshot so a 'base' re-upload never wipes these,
-    and vice versa - see ingestion/commit.py."""
+    bonus file, or a one-off backpay file (e.g. overtime backpay sheets that
+    don't fit the standard Formal/Contract shape). Kept separate from
+    monthly_employee_snapshot so a 'base' re-upload never wipes these, and
+    vice versa - see ingestion/commit.py.
+
+    pay_type='backpay' rows stay the original loose staff_id+amount shape
+    (confirmed with the user - V1.5 §0.2/PRD V1.6 background: backpay files
+    really are just a simple list, not a full payroll template). pay_type=
+    'bonus' rows are the standalone "奖金批次" upload, which PRD V1.6
+    revealed is actually a full 26-field structured template (see
+    ingestion/full_fields.py's BONUS_FIELDS) - the extra descriptive columns
+    below and full_detail_json are only ever populated for those, left NULL
+    for backpay rows."""
 
     __tablename__ = "supplemental_pay_snapshot"
 
@@ -141,6 +169,20 @@ class SupplementalPaySnapshot(Base):
     matched_base_employee: Mapped[bool] = mapped_column(Boolean, default=False)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # PRD V1.6 §2.1 - only populated for pay_type='bonus' rows.
+    department2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department3: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reporting_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_grade: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cost_center: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    work_country: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    work_station: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    joining_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resign_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    full_detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ExitRecord(Base):

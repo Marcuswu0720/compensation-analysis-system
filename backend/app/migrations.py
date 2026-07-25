@@ -31,6 +31,29 @@ SALARY_COMPONENT_COLUMNS = [
     "net_pay",
 ]
 
+# PRD V1.6 §2.1: descriptive fields the original model never captured.
+FULL_DETAIL_DESCRIPTIVE_COLUMNS = {
+    "department2": "VARCHAR(255)",
+    "department3": "VARCHAR(255)",
+    "position": "VARCHAR(255)",
+    "reporting_line": "VARCHAR(255)",
+    "state": "VARCHAR(64)",
+    "work_station": "VARCHAR(255)",
+    "joining_date": "VARCHAR(32)",
+    "full_detail_json": "TEXT",
+}
+
+# Same idea, but supplemental_pay_snapshot also needs job_grade/cost_center/
+# work_country/resign_date on top of the columns above (see models.py's
+# SupplementalPaySnapshot docstring - only populated for pay_type='bonus').
+SUPPLEMENTAL_FULL_DETAIL_COLUMNS = {
+    **FULL_DETAIL_DESCRIPTIVE_COLUMNS,
+    "job_grade": "VARCHAR(32)",
+    "cost_center": "VARCHAR(255)",
+    "work_country": "VARCHAR(64)",
+    "resign_date": "VARCHAR(32)",
+}
+
 
 def run_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
@@ -53,6 +76,16 @@ def run_migrations(engine: Engine) -> None:
             for col in SALARY_COMPONENT_COLUMNS:
                 if col not in columns:
                     conn.execute(text(f"ALTER TABLE monthly_employee_snapshot ADD COLUMN {col} FLOAT"))
+            for col, sql_type in FULL_DETAIL_DESCRIPTIVE_COLUMNS.items():
+                if col not in columns:
+                    conn.execute(text(f"ALTER TABLE monthly_employee_snapshot ADD COLUMN {col} {sql_type}"))
+
+    if "supplemental_pay_snapshot" in inspector.get_table_names():
+        columns = {c["name"] for c in inspector.get_columns("supplemental_pay_snapshot")}
+        with engine.begin() as conn:
+            for col, sql_type in SUPPLEMENTAL_FULL_DETAIL_COLUMNS.items():
+                if col not in columns:
+                    conn.execute(text(f"ALTER TABLE supplemental_pay_snapshot ADD COLUMN {col} {sql_type}"))
 
     for table in ["monthly_employee_snapshot", "monthly_bonus_snapshot", "supplemental_pay_snapshot", "exit_records"]:
         if table not in inspector.get_table_names():

@@ -1,5 +1,6 @@
 """PRD V1.3 (base) + V1.5 §2 (batch-type filter, availability check, and
-Formal/Contract sheet split): employee-level salary detail Excel export.
+Formal/Contract sheet split) + V1.6 (full field templates + field-count
+self-check): employee-level salary detail Excel export.
 
 Available to both admin and viewer accounts - the permission boundary is
 entirely the same entity/entity_department rule set used everywhere else
@@ -21,13 +22,17 @@ from openpyxl.styles import Font
 from sqlalchemy.orm import Session
 
 from ..compute.export import (
-    EXPORT_COLUMNS,
+    BACKPAY_EXPORT_COLUMNS,
     SALARY_TYPE_LABEL,
     SALARY_TYPES,
-    SUPPLEMENTAL_EXPORT_COLUMNS,
+    bonus_sheet_columns,
     check_month_type_availability,
-    get_employee_detail_rows,
-    get_supplemental_detail_rows,
+    contract_sheet_columns,
+    formal_sheet_columns,
+    get_backpay_detail_rows,
+    get_base_full_detail_rows,
+    get_bonus_detail_rows,
+    verify_sheet_field_count,
 )
 from ..compute.trends import list_available_months
 from ..database import get_db
@@ -38,10 +43,6 @@ from ..security import get_allowed_scope, get_current_user, resolve_requested_fi
 router = APIRouter(prefix="/api/export", tags=["export"])
 
 _UNSAFE_FILENAME_CHARS = str.maketrans({c: "_" for c in '/\\:*?"<>|'})
-
-# EXPORT_COLUMNS minus employment_type_label - each of these sheets IS one
-# employment type, so the column would just repeat the same value every row.
-_SHEET_COLUMNS = [c for c in EXPORT_COLUMNS if c[0] != "employment_type_label"]
 
 
 def _scope_label(requested: str | None, rules, kind: str) -> str:
@@ -96,21 +97,37 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
 
     base_rows: list[dict] = []
     if "base" in salary_types:
-        base_rows, _ = get_employee_detail_rows(
-            db, months=months, department=department, entity=entity, scope_rules=scope.rules, fold_supplemental=False
-        )
-    supplemental_types = [t for t in ("bonus", "backpay") if t in salary_types]
-    supplemental_rows = get_supplemental_detail_rows(
-        db, months=months, pay_types=supplemental_types, department=department, entity=entity, scope_rules=scope.rules
-    )
+        base_rows = get_base_full_detail_rows(db, months=months, department=department, entity=entity, scope_rules=scope.rules)
+    bonus_rows: list[dict] = []
+    if "bonus" in salary_types:
+        bonus_rows = get_bonus_detail_rows(db, months=months, department=department, entity=entity, scope_rules=scope.rules)
+    backpay_rows: list[dict] = []
+    if "backpay" in salary_types:
+        backpay_rows = get_backpay_detail_rows(db, months=months, department=department, entity=entity, scope_rules=scope.rules)
 
     entity_label = _scope_label(entity, scope.rules, "entity")
     department_label = _scope_label(department, scope.rules, "department")
     now = datetime.utcnow()
 
-    workbook_bytes = _build_workbook(
-        base_rows, supplemental_rows, salary_types, user.username, now, entity_label, department_label, start_month, end_month, missing
-    )
+    try:
+        workbook_bytes = _build_workbook(
+            base_rows,
+            bonus_rows,
+            backpay_rows,
+            salary_types,
+            user.username,
+            now,
+            entity_label,
+            department_label,
+            start_month,
+            end_month,
+            missing,
+        )
+    except ValueError as exc:
+        # PRD V1.6's field-count self-check tripped - surface loudly instead
+        # of ever handing out a silently-incomplete file (this is the
+        # failure mode the self-check exists to catch).
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     db.add(
         DownloadLog(
@@ -121,7 +138,7 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
             department_scope=department_label,
             month_range_start=start_month,
             month_range_end=end_month,
-            row_count=len(base_rows) + len(supplemental_rows),
+            row_count=len(base_rows) + len(bonus_rows) + len(backpay_rows),
             salary_types=",".join(salary_types),
         )
     )
@@ -162,23 +179,32 @@ def _write_data_sheet(wb, title: str, rows: list[dict], columns: list[tuple]) ->
     for col_idx in range(1, len(columns) + 1):
         ws.cell(row=1, column=col_idx).font = Font(bold=True)
     for row in rows:
-        ws.append([row[key] for key, _ in columns])
+        ws.append([row.get(key) for key, _ in columns])
     for col_idx, (_, label) in enumerate(columns, start=1):
         ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max(len(label) * 1.8, 12)
 
 
-def _build_workbook(base_rows, supplemental_rows, salary_types, username, now, entity_label, department_label, start_month, end_month, missing) -> bytes:
+def _build_workbook(base_rows, bonus_rows, backpay_rows, salary_types, username, now, entity_label, department_label, start_month, end_month, missing) -> bytes:
     wb = openpyxl.Workbook()
     _write_watermark_sheet(wb, username, now, entity_label, department_label, start_month, end_month, salary_types, missing)
 
     if "base" in salary_types:
+        formal_columns = formal_sheet_columns()
+        contract_columns = contract_sheet_columns()
+        verify_sheet_field_count("正式工明细", formal_columns)
+        verify_sheet_field_count("合同工明细", contract_columns)
         formal_rows = [r for r in base_rows if r["employment_type"] == "Formal"]
         contract_rows = [r for r in base_rows if r["employment_type"] != "Formal"]
-        _write_data_sheet(wb, "正式工明细", formal_rows, _SHEET_COLUMNS)
-        _write_data_sheet(wb, "合同工明细", contract_rows, _SHEET_COLUMNS)
+        _write_data_sheet(wb, "正式工明细", formal_rows, formal_columns)
+        _write_data_sheet(wb, "合同工明细", contract_rows, contract_columns)
 
-    if any(t in salary_types for t in ("bonus", "backpay")):
-        _write_data_sheet(wb, "奖金补发明细", supplemental_rows, SUPPLEMENTAL_EXPORT_COLUMNS)
+    if "bonus" in salary_types:
+        bonus_columns = bonus_sheet_columns()
+        verify_sheet_field_count("奖金明细", bonus_columns)
+        _write_data_sheet(wb, "奖金明细", bonus_rows, bonus_columns)
+
+    if "backpay" in salary_types:
+        _write_data_sheet(wb, "补发明细", backpay_rows, BACKPAY_EXPORT_COLUMNS)
 
     buf = io.BytesIO()
     wb.save(buf)
