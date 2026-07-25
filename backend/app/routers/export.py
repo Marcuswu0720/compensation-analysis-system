@@ -1,4 +1,5 @@
-"""PRD V1.3: employee-level salary detail Excel export.
+"""PRD V1.3 (base) + V1.5 §2 (batch-type filter, availability check, and
+Formal/Contract sheet split): employee-level salary detail Excel export.
 
 Available to both admin and viewer accounts - the permission boundary is
 entirely the same entity/entity_department rule set used everywhere else
@@ -19,7 +20,15 @@ from fastapi.responses import StreamingResponse
 from openpyxl.styles import Font
 from sqlalchemy.orm import Session
 
-from ..compute.export import EXPORT_COLUMNS, get_employee_detail_rows
+from ..compute.export import (
+    EXPORT_COLUMNS,
+    SALARY_TYPE_LABEL,
+    SALARY_TYPES,
+    SUPPLEMENTAL_EXPORT_COLUMNS,
+    check_month_type_availability,
+    get_employee_detail_rows,
+    get_supplemental_detail_rows,
+)
 from ..compute.trends import list_available_months
 from ..database import get_db
 from ..models import DownloadLog, User
@@ -29,6 +38,10 @@ from ..security import get_allowed_scope, get_current_user, resolve_requested_fi
 router = APIRouter(prefix="/api/export", tags=["export"])
 
 _UNSAFE_FILENAME_CHARS = str.maketrans({c: "_" for c in '/\\:*?"<>|'})
+
+# EXPORT_COLUMNS minus employment_type_label - each of these sheets IS one
+# employment type, so the column would just repeat the same value every row.
+_SHEET_COLUMNS = [c for c in EXPORT_COLUMNS if c[0] != "employment_type_label"]
 
 
 def _scope_label(requested: str | None, rules, kind: str) -> str:
@@ -54,6 +67,11 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
 
     department, entity = resolve_requested_filters(scope, payload.department, payload.entity)
 
+    salary_types = payload.salary_types or list(SALARY_TYPES)
+    invalid = set(salary_types) - set(SALARY_TYPES)
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"salary_types 里有无法识别的批次类型: {sorted(invalid)}，可选值是 {SALARY_TYPES}")
+
     available = list_available_months(db)
     if not available:
         raise HTTPException(status_code=400, detail="还没有任何已入库的数据可以导出")
@@ -63,15 +81,36 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
     if not months:
         raise HTTPException(status_code=400, detail=f"{start_month} 至 {end_month} 之间没有任何已入库的数据")
 
-    rows, unattributed_by_month = get_employee_detail_rows(
-        db, months=months, department=department, entity=entity, scope_rules=scope.rules
+    availability = check_month_type_availability(
+        db, months=months, salary_types=salary_types, department=department, entity=entity, scope_rules=scope.rules
+    )
+    missing = [(m, t) for m in months for t in salary_types if not availability[(m, t)]]
+    if len(missing) == len(months) * len(salary_types):
+        # Nothing at all in the requested range/type/scope - PRD V1.5 §2.1:
+        # refuse with a clear reason instead of generating an empty file.
+        if len(months) == 1 and len(salary_types) == 1:
+            detail = f"{months[0]} 的{SALARY_TYPE_LABEL[salary_types[0]]}暂无数据，可能尚未上传"
+        else:
+            detail = "所选月份/批次类型范围内暂无数据，可能尚未上传：" + "、".join(f"{m} {SALARY_TYPE_LABEL[t]}" for m, t in missing)
+        raise HTTPException(status_code=400, detail=detail)
+
+    base_rows: list[dict] = []
+    if "base" in salary_types:
+        base_rows, _ = get_employee_detail_rows(
+            db, months=months, department=department, entity=entity, scope_rules=scope.rules, fold_supplemental=False
+        )
+    supplemental_types = [t for t in ("bonus", "backpay") if t in salary_types]
+    supplemental_rows = get_supplemental_detail_rows(
+        db, months=months, pay_types=supplemental_types, department=department, entity=entity, scope_rules=scope.rules
     )
 
     entity_label = _scope_label(entity, scope.rules, "entity")
     department_label = _scope_label(department, scope.rules, "department")
     now = datetime.utcnow()
 
-    workbook_bytes = _build_workbook(rows, user.username, now, entity_label, department_label, start_month, end_month, unattributed_by_month)
+    workbook_bytes = _build_workbook(
+        base_rows, supplemental_rows, salary_types, user.username, now, entity_label, department_label, start_month, end_month, missing
+    )
 
     db.add(
         DownloadLog(
@@ -82,7 +121,8 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
             department_scope=department_label,
             month_range_start=start_month,
             month_range_end=end_month,
-            row_count=len(rows),
+            row_count=len(base_rows) + len(supplemental_rows),
+            salary_types=",".join(salary_types),
         )
     )
     db.commit()
@@ -97,39 +137,48 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
     )
 
 
-def _build_workbook(rows, username, now, entity_label, department_label, start_month, end_month, unattributed_by_month) -> bytes:
-    wb = openpyxl.Workbook()
+def _write_watermark_sheet(wb, username, now, entity_label, department_label, start_month, end_month, salary_types, missing) -> None:
     ws = wb.active
-    ws.title = "薪酬明细"
-
-    # Metadata/watermark block (PRD V1.3 §3.2) - a low-cost but genuinely
-    # useful traceability measure: if this file is ever forwarded outside
-    # the company, whoever finds it can see exactly who exported it and when.
-    watermark_lines = [
+    ws.title = "说明"
+    lines = [
         f"本文件由 {username} 于 {now.strftime('%Y-%m-%d %H:%M:%S')} 导出",
         f"数据范围：{entity_label}-{department_label}，{start_month} 至 {end_month}",
+        "批次类型：" + "、".join(SALARY_TYPE_LABEL[t] for t in salary_types),
         "内容涉及员工薪酬明细，请遵守公司薪酬保密规定，不得外传",
     ]
-    if unattributed_by_month:
-        detail = "；".join(f"{m}: ₦{amt:,.2f}" for m, amt in sorted(unattributed_by_month.items()))
-        watermark_lines.append(f"提示：以下月份存在无法关联到具体在职员工的奖金/补发金额，未计入下表个人明细，但已计入公司/部门总成本：{detail}")
-
-    for line in watermark_lines:
+    if missing:
+        lines.append(
+            "提示：以下月份/批次类型组合在所选范围内暂无数据，可能尚未上传，未包含在下面的sheet里："
+            + "、".join(f"{m} {SALARY_TYPE_LABEL[t]}" for m, t in missing)
+        )
+    for line in lines:
         ws.append([line])
         ws.cell(row=ws.max_row, column=1).font = Font(italic=True, size=9, color="666666")
-    ws.append([])
 
-    header_row = ws.max_row + 1
-    ws.append([label for _, label in EXPORT_COLUMNS])
-    for col_idx in range(1, len(EXPORT_COLUMNS) + 1):
-        ws.cell(row=header_row, column=col_idx).font = Font(bold=True)
 
+def _write_data_sheet(wb, title: str, rows: list[dict], columns: list[tuple]) -> None:
+    ws = wb.create_sheet(title)
+    ws.append([label for _, label in columns])
+    for col_idx in range(1, len(columns) + 1):
+        ws.cell(row=1, column=col_idx).font = Font(bold=True)
     for row in rows:
-        ws.append([row[key] for key, _ in EXPORT_COLUMNS])
+        ws.append([row[key] for key, _ in columns])
+    for col_idx, (_, label) in enumerate(columns, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max(len(label) * 1.8, 12)
 
-    for col_idx, (key, label) in enumerate(EXPORT_COLUMNS, start=1):
-        width = max(len(label) * 1.8, 12)
-        ws.column_dimensions[ws.cell(row=header_row, column=col_idx).column_letter].width = width
+
+def _build_workbook(base_rows, supplemental_rows, salary_types, username, now, entity_label, department_label, start_month, end_month, missing) -> bytes:
+    wb = openpyxl.Workbook()
+    _write_watermark_sheet(wb, username, now, entity_label, department_label, start_month, end_month, salary_types, missing)
+
+    if "base" in salary_types:
+        formal_rows = [r for r in base_rows if r["employment_type"] == "Formal"]
+        contract_rows = [r for r in base_rows if r["employment_type"] != "Formal"]
+        _write_data_sheet(wb, "正式工明细", formal_rows, _SHEET_COLUMNS)
+        _write_data_sheet(wb, "合同工明细", contract_rows, _SHEET_COLUMNS)
+
+    if any(t in salary_types for t in ("bonus", "backpay")):
+        _write_data_sheet(wb, "奖金补发明细", supplemental_rows, SUPPLEMENTAL_EXPORT_COLUMNS)
 
     buf = io.BytesIO()
     wb.save(buf)

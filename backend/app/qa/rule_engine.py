@@ -13,7 +13,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from ..compute.attribution import COMPONENT_LABELS, compute_attribution
+from ..compute.attribution import compute_attribution, flatten_attribution
 from ..compute.trends import get_trend, list_available_months, list_departments, list_entities
 from ..models import User
 from ..security import get_allowed_scope, resolve_requested_filters
@@ -183,38 +183,49 @@ def _pct_str(pct: float | None) -> str:
     return f"，约占净变化的 {pct:.1f}%" if pct is not None else ""
 
 
+def _format_headcount_item(item) -> str:
+    net = (item.joiners_count or 0) - (item.leavers_count or 0)
+    if net > 0:
+        direction = f"净增{net}人"
+    elif net < 0:
+        direction = f"净减{abs(net)}人"
+    else:
+        direction = "净变化0人"
+    detail = f"新入职{item.joiners_count}人+{_fmt_money(item.joiners_cost)}，离职{item.leavers_count}人-{_fmt_money(item.leavers_cost)}"
+    return f"人数变化：{direction}（{detail}），{'+' if item.amount >= 0 else ''}{_fmt_money(item.amount)}{_pct_str(item.pct)}"
+
+
+def _format_line_item(item) -> str:
+    if item.key == "headcount":
+        return _format_headcount_item(item)
+    return f"{item.label}：{'+' if item.amount >= 0 else ''}{_fmt_money(item.amount)}{_pct_str(item.pct)}"
+
+
 def _format_attribution(result, department: str | None, entity: str | None, user: User, note: str) -> str:
     label = _scope_label(department, entity)
     r = result
+    items = flatten_attribution(r)
+
     lines = [
         f"{note}{label} {r.prev_month} → {r.cur_month} 环比归因：",
         f"  {r.prev_month} 总成本 {_fmt_money(r.prev_total)}，{r.cur_month} 总成本 {_fmt_money(r.cur_total)}",
         f"  净变化：{'+' if r.net_change >= 0 else ''}{_fmt_money(r.net_change)}",
         "",
-        "归因拆解（人数/离职维度）：",
-        f"  1) 新入职 {r.joiners_count} 人，带来成本 +{_fmt_money(r.joiners_cost)}{_pct_str(r.joiners_pct)}",
-        f"  2) 离职 {r.leavers_count} 人，减少成本 -{_fmt_money(r.leavers_cost)}{_pct_str(r.leavers_pct)}",
-        f"  3) 留任 {r.stayers_count} 人，成本变化 {'+' if r.stayers_delta >= 0 else ''}{_fmt_money(r.stayers_delta)}{_pct_str(r.stayers_pct)}",
+        "归因拆解（按贡献金额绝对值从大到小排序）：",
     ]
-    if r.unattributed_delta:
-        lines.append(
-            f"  4) 其他调整（无法关联到具体在职员工的奖金/补发） {'+' if r.unattributed_delta >= 0 else ''}{_fmt_money(r.unattributed_delta)}"
-        )
+    for idx, item in enumerate(items, start=1):
+        lines.append(f"  {idx}) {_format_line_item(item)}")
+
     lines.append("")
+    items_sum = sum(i.amount for i in items)
     lines.append(
-        f"校验：{'三项' if not r.unattributed_delta else '四项'}相加 = {_fmt_money(r.checksum)}"
+        f"校验：以上{len(items)}项相加 = {_fmt_money(items_sum)}"
         f"（{'✓ 与净变化吻合' if r.reconciled else '✗ 与净变化不吻合，数据可能有问题，此结论需要人工复核'}）"
     )
 
-    if r.component_deltas:
-        lines.append("")
-        lines.append(f"留任员工 {_fmt_money(r.stayers_delta)} 的变化，按薪资类目精确拆解（相加严格等于留任总变化）：")
-        for field, amount in r.component_deltas.items():
-            lines.append(f"  {COMPONENT_LABELS.get(field, field)}：{'+' if amount >= 0 else ''}{_fmt_money(amount)}")
-
     if r.behavior_labels:
         lines.append("")
-        lines.append("留任员工按变动性质分类（一人可能同时命中多个标签，人数不能直接相加；金额以上面的类目拆解为准，这里仅作叙事参考）：")
+        lines.append("按变动性质分类的补充说明（一人可能同时命中多个标签，人数/金额不能跨行相加；以上面的归因拆解为准，这里仅作叙事参考）：")
         for lbl in r.behavior_labels:
             lines.append(
                 f"  {lbl.label}：正式工 {lbl.count_formal} 人 + 合同工 {lbl.count_contract} 人，"
@@ -229,7 +240,7 @@ def _format_attribution(result, department: str | None, entity: str | None, user
 
     if r.top_increases:
         lines.append("")
-        lines.append("留任员工中成本涨幅最大的几位：")
+        lines.append("成本涨幅最大的几位员工：")
         for m in r.top_increases[:5]:
             name = m.name if user.role == "admin" else "[无权限查看，仅管理员可见]"
             lines.append(f"  {name}（{m.job_grade or '-'}）：+{_fmt_money(m.hr_cost)}")

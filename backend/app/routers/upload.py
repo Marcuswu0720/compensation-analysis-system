@@ -1,9 +1,16 @@
+import io
 import json
 import re
+from datetime import datetime
+from urllib.parse import quote
 
+import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from openpyxl.styles import Font
 from sqlalchemy.orm import Session
 
+from ..compute.export import RECONCILIATION_COLUMNS, build_department_category_summary
 from ..database import get_db
 from ..ingestion.commit import confirm_upload, delete_confirmed_batch, reassign_month
 from ..ingestion.loader import SALARY_TYPES, stage_upload
@@ -78,6 +85,30 @@ def get_batch(batch_id: int, db: Session = Depends(get_db), _: User = Depends(re
     return _batch_summary(batch)
 
 
+@router.get("/{batch_id}/reconciliation-export")
+def reconciliation_export(batch_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """PRD V1.5 §1: a per-(Entity, Department1) x salary-category Excel of a
+    staged batch, for the admin to cross-check offline against the comp
+    team's historical numbers before confirming. Works on the staged JSON
+    payload directly - the batch doesn't need to be confirmed yet."""
+    batch = _get_batch_or_404(db, batch_id)
+    if batch.salary_type != "base":
+        raise HTTPException(status_code=400, detail="只有底薪批次支持分部门×分薪资类目核对导出")
+    payload = json.loads(batch.staged_data)
+    employees = payload.get("employees", [])
+    if not employees:
+        raise HTTPException(status_code=400, detail="这个批次没有员工数据，无法生成核对文件")
+
+    rows = build_department_category_summary(employees)
+    workbook_bytes = _build_reconciliation_workbook(rows, batch.month)
+    filename = f"分部门核对_{batch.month}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(workbook_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
 @router.post("/{batch_id}/confirm")
 def confirm(batch_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     batch = _get_batch_or_404(db, batch_id)
@@ -130,6 +161,39 @@ def _get_batch_or_404(db: Session, batch_id: int) -> UploadBatch:
     if not batch:
         raise HTTPException(status_code=404, detail="上传批次不存在")
     return batch
+
+
+def _build_reconciliation_workbook(rows: list[dict], month: str) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "分部门核对"
+
+    ws.append([f"{month} 分部门 × 分薪资类目核对（校验用，尚未确认入库的数据）"])
+    ws.cell(row=1, column=1).font = Font(italic=True, size=9, color="666666")
+    ws.append([])
+
+    header_row = ws.max_row + 1
+    ws.append([label for _, label in RECONCILIATION_COLUMNS])
+    for col_idx in range(1, len(RECONCILIATION_COLUMNS) + 1):
+        ws.cell(row=header_row, column=col_idx).font = Font(bold=True)
+
+    totals = {key: 0 for key, _ in RECONCILIATION_COLUMNS if key not in ("entity", "department1")}
+    for row in rows:
+        ws.append([row[key] for key, _ in RECONCILIATION_COLUMNS])
+        for key in totals:
+            totals[key] += row[key]
+
+    total_row = ["合计", ""] + [totals[key] for key, _ in RECONCILIATION_COLUMNS if key not in ("entity", "department1")]
+    ws.append(total_row)
+    for col_idx in range(1, len(RECONCILIATION_COLUMNS) + 1):
+        ws.cell(row=ws.max_row, column=col_idx).font = Font(bold=True)
+
+    for col_idx, (_, label) in enumerate(RECONCILIATION_COLUMNS, start=1):
+        ws.column_dimensions[ws.cell(row=header_row, column=col_idx).column_letter].width = max(len(label) * 1.8, 12)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _batch_summary(batch: UploadBatch) -> dict:

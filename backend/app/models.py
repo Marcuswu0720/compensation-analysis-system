@@ -226,6 +226,10 @@ class DownloadLog(Base):
     month_range_start: Mapped[str | None] = mapped_column(String(7), nullable=True)
     month_range_end: Mapped[str | None] = mapped_column(String(7), nullable=True)
     row_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Comma-joined subset of base/bonus/backpay actually included (PRD V1.5
+    # §2.1's batch-type filter) - nullable so old rows from before this
+    # column existed don't need backfilling.
+    salary_types: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class DataOperationLog(Base):

@@ -73,3 +73,4 @@ class ExportDetailRequest(BaseModel):
     entity: str | None = None
     start_month: str | None = None
     end_month: str | None = None
+    salary_types: list[str] | None = None  # subset of base/bonus/backpay; None/[] = all three

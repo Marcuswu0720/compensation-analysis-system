@@ -223,6 +223,7 @@ def download_log(db: Session = Depends(get_db), _: User = Depends(require_admin)
             "month_range_start": log.month_range_start,
             "month_range_end": log.month_range_end,
             "row_count": log.row_count,
+            "salary_types": log.salary_types,
         }
         for log in logs
     ]

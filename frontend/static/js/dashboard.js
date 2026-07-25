@@ -88,6 +88,7 @@ function renderBatch(batch) {
   document.getElementById('confirmBtn').disabled = busy;
   document.getElementById('rejectBtn').disabled = busy;
   document.getElementById('confirmBtn').textContent = batch.status === 'confirmed' ? '已入库' : '确认无误，正式入库';
+  document.getElementById('reconciliationExportBtn').style.display = batch.salary_type === 'base' ? '' : 'none';
 }
 
 async function loadUploadHistory() {
@@ -209,6 +210,16 @@ function initUploadTab() {
     }
   });
 
+  document.getElementById('reconciliationExportBtn').addEventListener('click', async () => {
+    const errEl = document.getElementById('reviewError');
+    errEl.textContent = '';
+    try {
+      await downloadBlob(`/api/upload/${currentBatchId}/reconciliation-export`, {}, '分部门核对.xlsx');
+    } catch (e) {
+      errEl.textContent = e.message;
+    }
+  });
+
   document.getElementById('historyStatusFilter').addEventListener('change', loadUploadHistory);
 
   loadUploadHistory();
@@ -276,19 +287,15 @@ async function populateMeta() {
 }
 
 // ---------- export tab (download employee-level salary detail) ----------
-async function downloadBlob(path, body) {
-  const resp = await apiFetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
+async function downloadBlob(path, fetchOptions, fallbackFilename) {
+  const resp = await apiFetch(path, fetchOptions || {});
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
     throw new Error(data.detail || `请求失败 (${resp.status})`);
   }
   const disposition = resp.headers.get('Content-Disposition') || '';
   const match = disposition.match(/filename\*=UTF-8''([^;]+)/);
-  const filename = match ? decodeURIComponent(match[1]) : '薪酬明细导出.xlsx';
+  const filename = match ? decodeURIComponent(match[1]) : fallbackFilename || '导出.xlsx';
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -300,18 +307,35 @@ async function downloadBlob(path, body) {
   URL.revokeObjectURL(url);
 }
 
+async function downloadPost(path, body, fallbackFilename) {
+  return downloadBlob(
+    path,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) },
+    fallbackFilename
+  );
+}
+
 function initExportTab() {
   document.getElementById('exportDownloadBtn').addEventListener('click', async () => {
     const errEl = document.getElementById('exportError');
     errEl.textContent = '';
+    const salaryTypes = [];
+    if (document.getElementById('exportTypeBase').checked) salaryTypes.push('base');
+    if (document.getElementById('exportTypeBonus').checked) salaryTypes.push('bonus');
+    if (document.getElementById('exportTypeBackpay').checked) salaryTypes.push('backpay');
+    if (salaryTypes.length === 0) {
+      errEl.textContent = '请至少勾选一个批次类型';
+      return;
+    }
     const payload = {
       department: document.getElementById('exportDept').value || null,
       entity: document.getElementById('exportEntity').value || null,
       start_month: document.getElementById('exportStart').value || null,
       end_month: document.getElementById('exportEnd').value || null,
+      salary_types: salaryTypes,
     };
     try {
-      await downloadBlob('/api/export/detail', payload);
+      await downloadPost('/api/export/detail', payload, '薪酬明细导出.xlsx');
     } catch (e) {
       errEl.textContent = e.message;
     }
@@ -458,25 +482,28 @@ function renderComposition(r) {
   `;
 }
 
-const COMPONENT_LABELS = {
-  basic_salary_actual: '底薪',
-  performance_bonus: '绩效薪资',
-  commission_bonus: '奖金/提成',
-  overtime_amount: '加班费',
-  other_income: '其他收入',
-  employer_statutory_cost: '雇主社保成本',
-  other_residual: '其他/无法拆分的差异',
-};
 const pctStr = (p) => (p === null || p === undefined ? '' : ` (${p.toFixed(1)}%)`);
+
+function flatItemLabel(item) {
+  if (item.key !== 'headcount') return item.label;
+  const net = (item.joiners_count || 0) - (item.leavers_count || 0);
+  const direction = net > 0 ? `净增${net}人` : net < 0 ? `净减${Math.abs(net)}人` : '净变化0人';
+  return `人数变化：${direction}（新入职${item.joiners_count}人+${fmtMoney(item.joiners_cost)}，离职${item.leavers_count}人-${fmtMoney(item.leavers_cost)}）`;
+}
 
 function renderAttribution(r) {
   const el = document.getElementById('attrResult');
   const movers = (list, sign) =>
     list.map((m) => `<li>${m.name || '(未知)'}（${m.job_grade || '-'}）: ${sign}${fmtMoney(Math.abs(m.hr_cost))}</li>`).join('');
 
-  const componentRows = Object.entries(r.component_deltas || {})
-    .map(([k, v]) => `<tr><td>${COMPONENT_LABELS[k] || k}</td><td>${v >= 0 ? '+' : ''}${fmtMoney(v)}</td></tr>`)
+  const items = r.flat_items || [];
+  const flatRows = items
+    .map(
+      (item, idx) =>
+        `<tr><td>${idx + 1}</td><td>${flatItemLabel(item)}</td><td>${item.amount >= 0 ? '+' : ''}${fmtMoney(item.amount)}</td><td>${pctStr(item.pct)}</td></tr>`
+    )
     .join('');
+  const itemsSum = items.reduce((s, item) => s + item.amount, 0);
 
   const labelRows = (r.behavior_labels || [])
     .map(
@@ -492,22 +519,17 @@ function renderAttribution(r) {
       <div class="stat"><div class="label">净变化</div><div class="value">${r.net_change >= 0 ? '+' : ''}${fmtMoney(r.net_change)}</div></div>
       <div class="stat"><div class="label">校验</div><div class="value">${r.reconciled ? '✓ 吻合' : '✗ 不吻合，需排查'}</div></div>
     </div>
+
+    <h4 style="margin-top:16px;">归因拆解（按贡献金额绝对值从大到小排序）</h4>
     <table>
-      <thead><tr><th>归因项</th><th>人数</th><th>成本影响</th></tr></thead>
-      <tbody>
-        <tr><td>新入职</td><td>${r.joiners_count}</td><td>+${fmtMoney(r.joiners_cost)}${pctStr(r.joiners_pct)}</td></tr>
-        <tr><td>离职</td><td>${r.leavers_count}</td><td>-${fmtMoney(r.leavers_cost)}${pctStr(r.leavers_pct)}</td></tr>
-        <tr><td>留任员工变化</td><td>${r.stayers_count}</td><td>${r.stayers_delta >= 0 ? '+' : ''}${fmtMoney(r.stayers_delta)}${pctStr(r.stayers_pct)}</td></tr>
-        ${r.unattributed_delta ? `<tr><td>其他调整（奖金/补发，无法关联到具体在职员工）</td><td>-</td><td>${r.unattributed_delta >= 0 ? '+' : ''}${fmtMoney(r.unattributed_delta)}</td></tr>` : ''}
-      </tbody>
+      <thead><tr><th>#</th><th>归因项</th><th>金额</th><th>占净变化</th></tr></thead>
+      <tbody>${flatRows}</tbody>
     </table>
+    <div class="muted" style="margin-top:6px;">校验：以上${items.length}项相加 = ${fmtMoney(itemsSum)}（${r.reconciled ? '✓ 与净变化吻合' : '✗ 与净变化不吻合，需排查'}）</div>
 
     ${r.anomalies && r.anomalies.length ? `<ul class="issue-list severe" style="margin-top:12px;">${r.anomalies.map((a) => `<li>⚠️ ${a}</li>`).join('')}</ul>` : ''}
 
-    <h4 style="margin-top:20px;">留任员工变化 - 按薪资类目精确拆解（严格等于留任总变化）</h4>
-    <table><tbody>${componentRows}</tbody></table>
-
-    <h4 style="margin-top:20px;">留任员工变化 - 按变动性质叙事（一人可能同时命中多个标签，人数/金额不能跨行相加；金额以上面的类目拆解为准）</h4>
+    <h4 style="margin-top:20px;">按变动性质分类的补充说明（一人可能同时命中多个标签，人数/金额不能跨行相加；以上面的归因拆解为准，这里仅作叙事参考）</h4>
     <table>
       <thead><tr><th>标签</th><th>人数</th><th>涉及成本</th></tr></thead>
       <tbody>${labelRows}</tbody>
@@ -515,11 +537,11 @@ function renderAttribution(r) {
 
     <div class="row" style="margin-top:12px;">
       <div>
-        <strong>留任员工涨幅最大：</strong>
+        <strong>成本涨幅最大：</strong>
         <ul>${movers(r.top_increases, '+')}</ul>
       </div>
       <div>
-        <strong>留任员工降幅最大：</strong>
+        <strong>成本降幅最大：</strong>
         <ul>${movers(r.top_decreases, '-')}</ul>
       </div>
     </div>
@@ -707,7 +729,7 @@ async function loadDownloadLog() {
         .map(
           (l) => `
       <div class="upload-list-item">
-        <span>${new Date(l.download_time).toLocaleString('zh-CN')} · ${l.username} · ${l.entity_scope || '-'} / ${l.department_scope || '-'} · ${l.month_range_start} 至 ${l.month_range_end}</span>
+        <span>${new Date(l.download_time).toLocaleString('zh-CN')} · ${l.username} · ${l.entity_scope || '-'} / ${l.department_scope || '-'} · ${l.month_range_start} 至 ${l.month_range_end}${l.salary_types ? ' · ' + l.salary_types.split(',').map((t) => SALARY_TYPE_LABEL[t] || t).join('+') : ''}</span>
         <span class="muted">${fmtInt(l.row_count)} 条记录</span>
       </div>`
         )

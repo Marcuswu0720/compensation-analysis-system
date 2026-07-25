@@ -172,7 +172,9 @@ def _fetch_scope(
 
 
 def _pct(amount: float, net_change: float) -> float | None:
-    return (amount / net_change * 100) if net_change else None
+    if not net_change:
+        return None
+    return amount / net_change * 100 + 0.0  # +0.0 normalizes -0.0 (e.g. 0 / -650) to a plain 0.0
 
 
 def _component_deltas(prev_emps: dict, cur_emps: dict, stayers: set[str], stayers_delta: float) -> dict[str, float]:
@@ -217,6 +219,68 @@ def _behavior_labels(prev_emps: dict, cur_emps: dict, stayers: set[str], net_cha
             )
         )
     return labels
+
+
+@dataclass
+class AttributionLineItem:
+    """One row in the flattened attribution list (PRD V1.5 §3): headcount
+    and every salary-category delta sit side by side as siblings instead of
+    headcount being one layer and categories nested a level below inside
+    "stayers". `amount` values across every item in the list returned by
+    flatten_attribution() always sum to exactly net_change - same guarantee
+    the old two-layer joiners/leavers/stayers+components structure had,
+    just re-flattened, not re-derived. Only the 'headcount' item carries the
+    joiners/leavers breakdown fields; presentation layers (rule_engine.py,
+    the web dashboard) format these into text/HTML themselves so the raw
+    numbers stay the only source of truth."""
+
+    key: str
+    label: str
+    amount: float
+    pct: float | None
+    joiners_count: int | None = None
+    joiners_cost: float | None = None
+    leavers_count: int | None = None
+    leavers_cost: float | None = None
+
+
+def flatten_attribution(r: AttributionResult) -> list[AttributionLineItem]:
+    headcount_amount = r.joiners_cost - r.leavers_cost
+    items = [
+        AttributionLineItem(
+            key="headcount",
+            label="人数变化",
+            amount=headcount_amount,
+            pct=_pct(headcount_amount, r.net_change),
+            joiners_count=r.joiners_count,
+            joiners_cost=r.joiners_cost,
+            leavers_count=r.leavers_count,
+            leavers_cost=r.leavers_cost,
+        )
+    ]
+
+    for key in COMPONENT_FIELDS:
+        amount = r.component_deltas.get(key, 0.0)
+        items.append(AttributionLineItem(key=key, label=COMPONENT_LABELS[key], amount=amount, pct=_pct(amount, r.net_change)))
+
+    residual = r.component_deltas.get("other_residual", 0.0)
+    if abs(residual) > CHANGE_TOLERANCE:
+        items.append(
+            AttributionLineItem(key="other_residual", label=COMPONENT_LABELS["other_residual"], amount=residual, pct=_pct(residual, r.net_change))
+        )
+
+    if abs(r.unattributed_delta) > CHANGE_TOLERANCE:
+        items.append(
+            AttributionLineItem(
+                key="unattributed",
+                label="无法归因到具体在职员工的奖金/补发调整",
+                amount=r.unattributed_delta,
+                pct=_pct(r.unattributed_delta, r.net_change),
+            )
+        )
+
+    items.sort(key=lambda it: -abs(it.amount))
+    return items
 
 
 def _anomalies(behavior_labels: list[BehaviorLabel], cur_month: str) -> list[str]:

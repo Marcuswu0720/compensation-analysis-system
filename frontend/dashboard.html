@@ -58,6 +58,7 @@
       <div class="row">
         <button id="confirmBtn">确认无误，正式入库</button>
         <button class="secondary" id="rejectBtn">数据有问题，放弃本次上传</button>
+        <button class="secondary" id="reconciliationExportBtn" style="display:none;">下载核对用Excel（分部门×分薪资类目）</button>
       </div>
       <div class="error" id="reviewError"></div>
     </div>
@@ -245,11 +246,27 @@
           <label>结束月份</label>
           <select id="exportEnd"></select>
         </div>
+      </div>
+      <div class="row" style="margin-top:10px;align-items:center;">
+        <div style="flex:0;">
+          <label>批次类型（不选=全部）</label>
+          <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal;margin-right:12px;">
+            <input type="checkbox" id="exportTypeBase" checked> 底薪批次
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal;margin-right:12px;">
+            <input type="checkbox" id="exportTypeBonus" checked> 奖金批次
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal;">
+            <input type="checkbox" id="exportTypeBackpay" checked> 补发批次
+          </label>
+        </div>
         <div style="flex:0;">
           <button id="exportDownloadBtn">下载 Excel</button>
         </div>
       </div>
       <div class="muted" style="margin-top:8px;">
+        底薪批次导出会拆成"正式工明细"和"合同工明细"两个sheet；奖金/补发批次导出成单独的"奖金补发明细"sheet
+        （只有工号+金额，没有完整薪资分量）。选中的月份+批次类型如果完全没有数据，会明确提示，不会生成空文件。
         导出内容包含员工姓名、工号及具体薪资明细，范围只会限定在你当前被授权可见的部门/实体之内。
         下载行为会被记录（下载人、时间、范围、条数），请遵守公司薪酬保密规定，不得外传。
       </div>

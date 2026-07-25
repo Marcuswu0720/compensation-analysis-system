@@ -36,8 +36,8 @@ def test_attribution_question_with_why_keyword(db_session):
 
     resp = answer_question(db_session, admin, "整个公司2月为什么比1月成本高")
     answer = resp["answer"]
-    assert "新入职 1 人" in answer
-    assert "离职 2 人" in answer
+    assert "新入职1人" in answer
+    assert "离职2人" in answer
     assert "✓ 与净变化吻合" in answer
 
 

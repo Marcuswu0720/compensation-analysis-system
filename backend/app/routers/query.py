@@ -3,7 +3,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..compute.attribution import compute_attribution
+from ..compute.attribution import compute_attribution, flatten_attribution
 from ..compute.categories import CATEGORY_FIELDS, compare_departments_by_category, get_category_trend, get_cost_composition
 from ..compute.trends import get_trend, list_available_months, list_departments, list_entities
 from ..database import get_db
@@ -49,6 +49,7 @@ def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user
         scope_rules=scope.rules,
     )
     result_dict = asdict(result)
+    result_dict["flat_items"] = [asdict(i) for i in flatten_attribution(result)]
     if user.role != "admin":
         for key in ("top_increases", "top_decreases"):
             for item in result_dict.get(key, []):

@@ -62,6 +62,12 @@ def run_migrations(engine: Engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0"))
 
+    if "download_log" in inspector.get_table_names():
+        columns = {c["name"] for c in inspector.get_columns("download_log")}
+        if "salary_types" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE download_log ADD COLUMN salary_types VARCHAR(64)"))
+
     # A soft-deleted row (is_deleted=True) has to be able to coexist with the
     # active row that superseded it for the same (month, staff_id) /
     # (performance_month, staff_id) key. Older databases created before this
