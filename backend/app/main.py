@@ -4,12 +4,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from .bootstrap import seed_admin_from_env
 from .database import Base, engine
 from .migrations import run_migrations
 from .routers import auth, chat, export, query, upload
 
 Base.metadata.create_all(bind=engine)
 run_migrations(engine)
+seed_admin_from_env()
 
 app = FastAPI(title="尼日利亚薪酬人力成本分析工具")
 
