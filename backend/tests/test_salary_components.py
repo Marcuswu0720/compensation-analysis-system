@@ -42,7 +42,12 @@ def test_formal_extraction_matches_real_column_names():
     assert "bank_charge" not in result
 
 
-def test_contract_extraction_uses_different_column_names_and_sums_statutory():
+def test_contract_extraction_uses_different_column_names_and_reads_er_cost_directly():
+    """PRD V1.8 correction: Contract has its own ready-made "ER COST" column
+    for employer statutory cost - V1.1/V1.5 wrongly assumed it needed
+    summing from NSITF+Pension ER+ITF+HMO. Those four columns may still be
+    present in the raw file (kept in this fixture to prove they're now
+    correctly ignored), but the sum is never computed anymore."""
     row = {
         "Actual Monthly Basic Salary": 200000.0,
         "Performance Standard": 50000.0,
@@ -56,6 +61,7 @@ def test_contract_extraction_uses_different_column_names_and_sums_statutory():
         "Pension ER": 2000.0,
         "ITF": 500.0,
         "HMO": 1500.0,
+        "ER COST": 4200.0,
         "Monthly Income Tax": 10000.0,
         "Other Deduction": 0.0,
         "Bank Charges": 100.0,
@@ -70,10 +76,19 @@ def test_contract_extraction_uses_different_column_names_and_sums_statutory():
     assert result["overtime_amount"] == 5000.0
     assert result["other_income"] == 2000.0
     assert result["gross_salary"] == 257000.0
-    assert result["employer_statutory_cost"] == 1000.0 + 2000.0 + 500.0 + 1500.0  # NSITF+PensionER+ITF+HMO
+    assert result["employer_statutory_cost"] == 4200.0  # straight from ER COST, not summed from NSITF/Pension/ITF/HMO
     assert result["deduction_total"] == 10000.0 + 0.0 + 100.0  # no private_loan for contract
     assert result["net_pay"] == 240000.0
     assert result["gross_salary_component_mismatch"] is False
+
+
+def test_contract_extraction_normalizes_header_whitespace_for_er_cost():
+    """PRD V1.8 §1: matching is case/whitespace-normalized, so a stray space
+    around "ER COST" (or any other direct-lookup column) doesn't silently
+    zero out employer_statutory_cost."""
+    row = {" ER Cost ": 999.0}
+    result = extract_salary_components(row, "contract")
+    assert result["employer_statutory_cost"] == 999.0
 
 
 def test_mismatch_flag_set_when_gross_salary_does_not_equal_component_sum():

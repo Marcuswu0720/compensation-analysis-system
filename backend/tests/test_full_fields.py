@@ -1,8 +1,9 @@
-"""PRD V1.6: coverage for the pieces V1.5's test suite had no equivalent of
-at all - the full field templates (ingestion/full_fields.py), the rewritten
-standalone 奖金批次 parser (ingestion/bonus_batch.py), and the loader/commit
-wiring that carries the new descriptive columns + full_detail_json through
-to the confirmed snapshot tables.
+"""Coverage for the pieces the plain ingestion-flow tests don't exercise:
+the full field templates (ingestion/full_fields.py), PRD V1.8's normalized
+header matching (ingestion/header_match.py), the field-mapping diagnostic,
+the standalone 奖金批次 parser (ingestion/bonus_batch.py), and the
+loader/commit wiring that carries the new descriptive columns +
+full_detail_json through to the confirmed snapshot tables.
 """
 
 import datetime
@@ -21,13 +22,42 @@ from app.ingestion.full_fields import (
     NEW_DESCRIPTIVE_KEYS,
     TOP_LEVEL_DESCRIPTIVE_KEYS,
     FieldSpec,
+    check_field_mapping,
     export_header,
     extract_full_detail,
 )
+from app.ingestion.header_match import build_header_index, find_alias, normalize_header
 from app.ingestion.loader import stage_upload
-from app.models import MonthlyEmployeeSnapshot, SupplementalPaySnapshot
+from app.models import SupplementalPaySnapshot
 
 from .xlsx_fixtures import _sheet, build_month1_workbook
+
+# ---------- header_match.py: PRD V1.8 §1's normalization layer ----------
+
+
+def test_normalize_header_strips_collapses_and_lowercases():
+    assert normalize_header("Staff Name") == "staff name"
+    assert normalize_header("Staff name") == "staff name"
+    assert normalize_header("  Staff   Name  ") == "staff name"
+    assert normalize_header("Joining Date \n(other)") == "joining date (other)"
+    assert normalize_header(None) == ""
+
+
+def test_find_alias_matches_case_and_whitespace_variants():
+    index = build_header_index(["Staff name", "  Joining Date  ", "Exit Date "])
+    assert find_alias(index, ("Staff Name",)) == "Staff name"
+    assert find_alias(index, ("Joining Date",)) == "  Joining Date  "
+    assert find_alias(index, ("Exit Date",)) == "Exit Date "
+    assert find_alias(index, ("Nonexistent",)) is None
+
+
+def test_find_alias_still_needs_a_real_synonym_for_different_wording():
+    index = build_header_index(["Leaving date"])
+    assert find_alias(index, ("Resign Date",)) is None  # genuinely different word, not a case/space issue
+    assert find_alias(index, ("Resign Date", "Leaving date")) == "Leaving date"
+
+
+# ---------- extract_full_detail / check_field_mapping ----------
 
 
 def test_export_header_formats_english_and_chinese():
@@ -36,18 +66,16 @@ def test_export_header_formats_english_and_chinese():
 
 
 def test_extract_full_detail_skips_excluded_keys_entirely():
-    """Regression test for the bug fixed mid-implementation: excluded keys
-    must not be checked for presence at all, even if their alias list
-    happens not to match this row - they're handled by a separate,
-    already-working mechanism (extract_salary_components / loader.py)."""
+    """Regression test: excluded keys must not be checked for presence at
+    all, even if their alias list happens not to match this row - they're
+    handled by a separate, already-working mechanism (extract_salary_components
+    / loader.py)."""
     specs = [
         FieldSpec("basic_salary_actual", "Actual Monthly Basic", "当月应发底薪", ("Actual Monthly Basic Salary",), True),
         FieldSpec("call_allowance", "Call Allowance", "话补", ("Call Allowance",), True),
     ]
     row = {"Call Allowance": 200}  # no "Actual Monthly Basic Salary" column at all
-    top_level, detail_json, missing = extract_full_detail(
-        row, specs, top_level_keys=set(), exclude_keys={"basic_salary_actual"}
-    )
+    top_level, detail_json, missing = extract_full_detail(row, specs, top_level_keys=set(), exclude_keys={"basic_salary_actual"})
     assert missing == []  # excluded key is never reported as missing
     assert detail_json == {"call_allowance": 200}
     assert top_level == {}
@@ -60,27 +88,62 @@ def test_extract_full_detail_splits_top_level_vs_detail_json():
         FieldSpec("state", "State", "所在州", ("State",), False),
     ]
     row = {"Position": "Engineer", "Performance STD": 5000}  # "State" column missing
-    top_level, detail_json, missing = extract_full_detail(
-        row, specs, top_level_keys={"position", "state"}, exclude_keys=set()
-    )
+    top_level, detail_json, missing = extract_full_detail(row, specs, top_level_keys={"position", "state"}, exclude_keys=set())
     assert top_level == {"position": "Engineer", "state": None}
     assert detail_json == {"performance_std": 5000}
     assert missing == ["state"]
 
 
-def test_extract_full_detail_converts_datetime_cells_to_json_safe_strings():
+def test_extract_full_detail_matches_case_and_whitespace_variants():
+    """PRD V1.8 §1: this used to require an exact string match - a header
+    spelled "position" (lowercase) or with a trailing space would silently
+    come up empty."""
+    specs = [FieldSpec("position", "Position", "职位", ("Position",), True)]
+    row = {"position ": "Engineer"}
+    top_level, _, missing = extract_full_detail(row, specs, top_level_keys={"position"}, exclude_keys=set())
+    assert missing == []
+    assert top_level["position"] == "Engineer"
+
+
+def test_extract_full_detail_converts_datetime_cells_to_date_only_strings():
     """Regression test: openpyxl hands back real datetime.datetime objects
     for date-formatted cells (Joining Date, Resign Date, etc.), not strings
-    like the synthetic test fixtures use - loader.py's later json.dumps()
-    call on the staged payload used to crash with "Object of type datetime
-    is not JSON serializable" the moment a real file had an actual date cell
-    in one of the ~50 new V1.6 fields."""
-    specs = [FieldSpec("joining_date", "Joining Date", "入职日期", ("Joining Date",), False)]
+    like the synthetic test fixtures use. PRD V1.8 §3: the stored value must
+    be a plain YYYY-MM-DD string, not "...T00:00:00" - both because that's
+    what the PRD asks for, and because the earlier isoformat()-based fix
+    still leaked the always-00:00:00 time part through to every export."""
+    specs = [FieldSpec("joining_date", "Joining Date", "入职日期", ("Joining Date",), True)]
     row = {"Joining Date": datetime.datetime(2020, 1, 15)}
     top_level, _, missing = extract_full_detail(row, specs, top_level_keys={"joining_date"}, exclude_keys=set())
     assert missing == []
-    assert top_level["joining_date"] == "2020-01-15T00:00:00"
+    assert top_level["joining_date"] == "2020-01-15"
     json.dumps(top_level)  # must not raise
+
+
+def test_check_field_mapping_reports_total_matched_and_missing_details():
+    specs = [
+        FieldSpec("staff_id", "Staff ID", "工号", ("Staff ID",), True),
+        FieldSpec("resign_date", "Resign Date", "离职时间", ("Resign Date", "Leaving date"), True),
+    ]
+    index = build_header_index(["staff id", "Joining Date"])  # staff_id matches (case-insensitive), resign_date doesn't
+    total, matched, missing = check_field_mapping(index, specs)
+    assert total == 2
+    assert matched == 1
+    assert missing == [{"key": "resign_date", "target_label": "Resign Date", "tried_aliases": ["Resign Date", "Leaving date"]}]
+
+
+def test_check_field_mapping_ignores_exclude_keys_unlike_extract_full_detail():
+    """The diagnostic checks EVERY target field regardless of whether some
+    other mechanism (analysis layer, loader.py's direct lookups) actually
+    supplies its value - that's the whole point of decoupling it from
+    extract_full_detail's routing."""
+    specs = [FieldSpec("entity", "Entity", "公司实体", ("Entity",), True)]
+    index = build_header_index(["Entity"])
+    total, matched, missing = check_field_mapping(index, specs)
+    assert (total, matched, missing) == (1, 1, [])
+
+
+# ---------- loader.py: base batch field-mapping diagnostic + date fix ----------
 
 
 def test_stage_base_handles_real_datetime_cells_without_crashing(db_session):
@@ -98,26 +161,16 @@ def test_stage_base_handles_real_datetime_cells_without_crashing(db_session):
     buf = io.BytesIO()
     wb.save(buf)
 
-    from app.ingestion.loader import stage_upload
-
     batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="x.xlsx", uploaded_by="t", salary_type="base")
     payload = json.loads(batch.staged_data)
     alice = next(e for e in payload["employees"] if e["staff_id"] == "E001")
-    assert alice["joining_date"] == "2020-01-15T00:00:00"
+    assert alice["joining_date"] == "2020-01-15"
 
 
-def test_bonus_batch_parser_handles_real_datetime_cells_without_crashing():
-    wb_bytes = build_full_bonus_workbook([_bonus_row(**{"Joining Date": datetime.datetime(2021, 3, 1)})])
-    result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))
-    json.dumps(result.rows[0])  # must not raise
-    assert result.rows[0]["joining_date"] == "2021-03-01T00:00:00"
-
-
-def test_stage_base_reports_missing_full_detail_fields_for_minimal_sheet(db_session):
+def test_stage_base_reports_field_mapping_check_for_minimal_sheet(db_session):
     """build_month1_workbook's Formal sheet only has 7 columns - almost none
-    of FORMAL_FIELDS' 37 aliases match, so this must surface as a loud
-    validation issue (not a silently-incomplete export) exactly like PRD
-    V1.6's background section describes V1.5's failure."""
+    of FORMAL_FIELDS' 40 aliases match, so this must surface as a loud
+    validation issue (not a silently-incomplete export)."""
     batch = stage_upload(db_session, month="2026-01", file_bytes=build_month1_workbook(), filename="x.xlsx", uploaded_by="t")
     payload = json.loads(batch.staged_data)
 
@@ -126,8 +179,51 @@ def test_stage_base_reports_missing_full_detail_fields_for_minimal_sheet(db_sess
     detail = json.loads(alice["full_detail_json"])
     assert "call_allowance" in detail and detail["call_allowance"] is None
 
-    issue = next(i for i in payload["issues"] if i["issue_type"] == "full_detail_field_not_found" and "正式工" in i["issue_detail"])
-    assert "call_allowance" in issue["issue_detail"]
+    issue = next(i for i in payload["issues"] if i["issue_type"] == "field_mapping_check" and "正式工" in i["issue_detail"])
+    assert "本次解析共 40 个目标字段" in issue["issue_detail"]
+    assert "Call Allowance" in issue["issue_detail"]
+
+
+def test_stage_base_does_not_report_field_mapping_check_for_absent_sheets(db_session):
+    """Regression test: parse_workbook() always populates every role key
+    with a SheetParseResult (sheet_name=None when nothing matched) - a
+    truthiness check on that object is always True, so a naive `if not
+    sheet_result: continue` guard never actually skips a genuinely-absent
+    sheet. Caught via a real bug during manual smoke testing: uploading a
+    file with no Contract-Flexi sheet at all produced a bogus "合同工(Flexi)
+    sheet「None」：本次解析共 33 个目标字段，成功匹配 0 个" warning."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _sheet(wb, "Formal", ["Staff ID", "Staff Name", "Entity", "Department 1", "Job Grade", "HR Cost"], [["E001", "Alice", "PalmPay", "Sales", "P1", 1000]])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="x.xlsx", uploaded_by="t")
+    payload = json.loads(batch.staged_data)
+    field_mapping_issues = [i for i in payload["issues"] if i["issue_type"] == "field_mapping_check"]
+    assert len(field_mapping_issues) == 1  # only for the Formal sheet that's actually in the file
+    assert "正式工" in field_mapping_issues[0]["issue_detail"]
+
+
+def test_stage_base_field_mapping_check_confirms_full_match(db_session):
+    """When every field's alias is found, the diagnostic reports the
+    positive "✓" case instead of staying silent."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    headers = [alias for spec in __import__("app.ingestion.full_fields", fromlist=["FORMAL_FIELDS"]).FORMAL_FIELDS for alias in spec.source_aliases]
+    row = [None] * len(headers)
+    row[headers.index("Staff ID")] = "E001"
+    row[headers.index("Entity")] = "PalmPay"
+    row[headers.index("Department 1")] = "Sales"
+    row[headers.index("HR Cost")] = 1000
+    _sheet(wb, "Formal", headers, [row])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="x.xlsx", uploaded_by="t")
+    payload = json.loads(batch.staged_data)
+    issue = next(i for i in payload["issues"] if i["issue_type"] == "field_mapping_check" and "正式工" in i["issue_detail"])
+    assert "本次解析共 40 个目标字段，成功匹配 40 个 ✓" in issue["issue_detail"]
 
 
 def test_stage_base_captures_full_fields_when_present(db_session):
@@ -150,15 +246,18 @@ def test_stage_base_captures_full_fields_when_present(db_session):
     detail = json.loads(alice["full_detail_json"])
     assert detail["call_allowance"] == 250
 
-    issue = next((i for i in payload["issues"] if i["issue_type"] == "full_detail_field_not_found" and "正式工" in i["issue_detail"]), None)
-    assert issue is None or "call_allowance" not in issue["issue_detail"]
 
+# ---------- bonus_batch.py: PRD V1.8's rebuilt field list ----------
 
+# Raw source column names, taken directly from full_fields.py's BONUS_FIELDS
+# source_aliases (the authoritative field-mapping file - NOT the same text
+# as the target labels: staff_name/position/resign_date's real source
+# columns are "Name"/"Job Title"/"Leaving date").
 BONUS_HEADERS = [
-    "Staff ID", "Staff Name", "Department 1", "Department 2", "Department 3", "Position", "Reporting Line",
-    "Job Grade", "State", "Work Station", "Joining Date", "Resign Date", "Cost Center", "Work Country",
+    "Entity", "Staff ID", "Employment Type", "Name", "Department 1", "Department 2", "Department 3",
+    "Job Title", "Reporting Line", "Job Grade", "Location", "Joining Date", "Leaving date",
     "Performance Standard", "KPI Score", "Performance Bonus", "Commission", "Other", "Deduction",
-    "Gross Total Amount", "PAYE", "ITF (ER)", "Bank Charges", "HR Cost", "Net Amount",
+    "Gross Total Amount", "ITF", "Net Amount", "HR Cost", "Remark",
 ]
 
 
@@ -166,13 +265,13 @@ def _bonus_row(staff_id="E001", staff_name="Alice", hr_cost=500, **overrides):
     row = {h: None for h in BONUS_HEADERS}
     row.update(
         {
+            "Entity": "PalmPay",
             "Staff ID": staff_id,
-            "Staff Name": staff_name,
+            "Employment Type": "Formal",
+            "Name": staff_name,
             "Department 1": "Sales",
             "Department 2": "Sub-Sales",
-            "Cost Center": "CC-001",
             "KPI Score": 92,
-            "PAYE": 40,
             "HR Cost": hr_cost,
         }
     )
@@ -189,25 +288,27 @@ def build_full_bonus_workbook(rows: list[list]) -> bytes:
     return buf.getvalue()
 
 
-def test_bonus_batch_parser_finds_no_missing_fields_when_headers_match_prd_list():
+def test_bonus_batch_parser_finds_no_missing_fields_when_headers_match_mapping_file():
     wb_bytes = build_full_bonus_workbook([_bonus_row()])
     result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))
-    assert result.missing_fields == set()
+    assert len(result.field_mapping_reports) == 1
+    report = result.field_mapping_reports[0]
+    assert (report.total, report.matched, report.missing) == (24, 24, [])
     assert len(result.rows) == 1
     row = result.rows[0]
     assert row["staff_id"] == "E001"
+    assert row["entity_raw"] == "PalmPay"
+    assert row["employment_type"] == "Formal"
     assert row["amount"] == 500
     assert row["department2"] == "Sub-Sales"
-    assert row["cost_center"] == "CC-001"
     assert row["full_detail_json_fields"]["kpi_score"] == 92
-    assert row["full_detail_json_fields"]["paye"] == 40
 
 
 def test_bonus_batch_parser_reports_missing_fields_and_skips_sheet_without_staff_id():
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    # No PAYE/ITF/Bank Charges columns at all this month.
-    headers = [h for h in BONUS_HEADERS if h not in ("PAYE", "ITF (ER)", "Bank Charges")]
+    # No ITF/Remark columns at all this month.
+    headers = [h for h in BONUS_HEADERS if h not in ("ITF", "Remark")]
     data_row = [None] * len(headers)
     data_row[headers.index("Staff ID")] = "E001"
     _sheet(wb, "Bonus", headers, [data_row])
@@ -216,30 +317,47 @@ def test_bonus_batch_parser_reports_missing_fields_and_skips_sheet_without_staff
     wb.save(buf)
 
     result = parse_bonus_batch_workbook(io.BytesIO(buf.getvalue()))
-    assert "paye" in result.missing_fields
-    assert "itf_er" in result.missing_fields
-    assert "bank_charges" in result.missing_fields
+    report = result.field_mapping_reports[0]
+    missing_keys = {m["key"] for m in report.missing}
+    assert missing_keys == {"itf_er", "remark"}
     assert any("Weird" in s for s in result.skipped_sheets)
     assert [r["staff_id"] for r in result.rows] == ["E001"]
 
 
 def test_bonus_batch_parser_skips_summary_rows():
-    wb_bytes = build_full_bonus_workbook(
-        [_bonus_row(staff_id="E001"), _bonus_row(staff_id="TOTAL", staff_name="TOTAL", hr_cost=999)]
-    )
+    wb_bytes = build_full_bonus_workbook([_bonus_row(staff_id="E001"), _bonus_row(staff_id="TOTAL", staff_name="TOTAL", hr_cost=999)])
     result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))
     assert [r["staff_id"] for r in result.rows] == ["E001"]
 
 
-def test_confirmed_bonus_batch_writes_full_detail_and_resolves_entity_from_base(db_session):
-    """End-to-end: stage+confirm a base batch first (so E001 has an entity),
-    then stage+confirm a standalone bonus batch - PRD V1.6 confirmed this
-    file has no Entity column of its own, so entity must be resolved via the
-    matched base-batch employee, exactly like backpay's existing behavior."""
+def test_bonus_batch_parser_handles_real_datetime_cells_without_crashing():
+    wb_bytes = build_full_bonus_workbook([_bonus_row(**{"Joining Date": datetime.datetime(2021, 3, 1)})])
+    result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))
+    json.dumps(result.rows[0])  # must not raise
+    assert result.rows[0]["joining_date"] == "2021-03-01"
+
+
+def test_confirmed_bonus_batch_parses_entity_and_employment_type_directly(db_session):
+    """PRD V1.8 correction: the bonus template DOES have its own Entity and
+    Employment Type columns (V1.6 wrongly assumed neither existed) - a row
+    with a real Entity value doesn't need a base-batch match to resolve one."""
+    bonus_bytes = build_full_bonus_workbook([_bonus_row(staff_id="STANDALONE", staff_name="NoBaseMatch")])
+    batch = stage_upload(db_session, month="2026-01", file_bytes=bonus_bytes, filename="bonus.xlsx", uploaded_by="t", salary_type="bonus")
+    confirm_upload(db_session, batch, operator="tester")
+
+    row = db_session.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.staff_id == "STANDALONE").one()
+    assert row.entity == "PalmPay"  # parsed directly from the row's own Entity column
+    assert row.employment_type == "Formal"
+    assert row.matched_base_employee is False  # still correctly reported as unmatched to any base-batch employee
+
+
+def test_confirmed_bonus_batch_falls_back_to_base_employee_entity_when_blank(db_session):
+    """Safety net for rows whose own Entity column is blank - still resolves
+    via the matched base-batch employee, same as V1.6."""
     base_batch = stage_upload(db_session, month="2026-01", file_bytes=build_month1_workbook(), filename="base.xlsx", uploaded_by="t", salary_type="base")
     confirm_upload(db_session, base_batch, operator="tester")
 
-    bonus_bytes = build_full_bonus_workbook([_bonus_row(staff_id="E001", hr_cost=500), _bonus_row(staff_id="GHOST", staff_name="Nobody", hr_cost=200)])
+    bonus_bytes = build_full_bonus_workbook([_bonus_row(staff_id="E001", hr_cost=500, Entity=None), _bonus_row(staff_id="GHOST", staff_name="Nobody", hr_cost=200, Entity=None)])
     bonus_batch = stage_upload(db_session, month="2026-01", file_bytes=bonus_bytes, filename="bonus.xlsx", uploaded_by="t", salary_type="bonus")
     payload = json.loads(bonus_batch.staged_data)
     assert payload["summary"]["salary_type"] == "bonus"
@@ -251,14 +369,13 @@ def test_confirmed_bonus_batch_writes_full_detail_and_resolves_entity_from_base(
 
     rows = db_session.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.pay_type == "bonus").all()
     alice = next(r for r in rows if r.staff_id == "E001")
-    assert alice.entity == "PalmPay"  # resolved from the matched base employee
+    assert alice.entity == "PalmPay"  # resolved from the matched base employee, own Entity column was blank
     assert alice.department2 == "Sub-Sales"
-    assert alice.cost_center == "CC-001"
     detail = json.loads(alice.full_detail_json)
     assert detail["kpi_score"] == 92
 
     ghost = next(r for r in rows if r.staff_id == "GHOST")
-    assert ghost.entity is None  # no base match, no entity column in the file - can't resolve
+    assert ghost.entity is None  # no base match, own Entity column also blank - genuinely can't resolve
 
 
 def test_full_field_key_sets_do_not_overlap():

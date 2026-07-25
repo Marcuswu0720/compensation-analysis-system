@@ -54,6 +54,14 @@ SUPPLEMENTAL_FULL_DETAIL_COLUMNS = {
     "resign_date": "VARCHAR(32)",
 }
 
+# PRD V1.8: bonus template's own Entity/Employment Type columns + the merged
+# Location field (replaces separate state/work_station for new bonus rows -
+# see models.py's SupplementalPaySnapshot docstring).
+SUPPLEMENTAL_V1_8_COLUMNS = {
+    "employment_type": "VARCHAR(32)",
+    "location": "VARCHAR(255)",
+}
+
 
 def run_migrations(engine: Engine) -> None:
     inspector = inspect(engine)
@@ -83,7 +91,7 @@ def run_migrations(engine: Engine) -> None:
     if "supplemental_pay_snapshot" in inspector.get_table_names():
         columns = {c["name"] for c in inspector.get_columns("supplemental_pay_snapshot")}
         with engine.begin() as conn:
-            for col, sql_type in SUPPLEMENTAL_FULL_DETAIL_COLUMNS.items():
+            for col, sql_type in {**SUPPLEMENTAL_FULL_DETAIL_COLUMNS, **SUPPLEMENTAL_V1_8_COLUMNS}.items():
                 if col not in columns:
                     conn.execute(text(f"ALTER TABLE supplemental_pay_snapshot ADD COLUMN {col} {sql_type}"))
 

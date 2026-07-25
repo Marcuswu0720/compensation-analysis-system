@@ -3,6 +3,12 @@
 Kept in one place because these are exactly the rules the PRD calls out as
 "will keep changing between months" — new aliases/patterns should only ever
 be added here, never hardcoded deeper in the parsing code.
+
+PRD V1.8 §1: matching against these aliases is case/whitespace-normalized
+(see header_match.py) before comparing, so this list only needs ONE entry
+per genuinely different wording - "Job Grade" also matches "Job grade" or
+"Job Grade " automatically now, so those used to need a second alias here
+just for the casing/whitespace difference; they don't anymore.
 """
 
 FIELD_ALIASES = {
@@ -11,9 +17,9 @@ FIELD_ALIASES = {
     "employment_type": ["Employment Type", "Employee Type/员工类型"],
     "staff_name": ["Staff Name", "Name"],
     "department1": ["Department 1"],
-    "job_grade": ["Job Grade", "Job grade"],
+    "job_grade": ["Job Grade"],
     "resign_date": ["Resign Date"],
-    "exit_date": ["Exit Date", "Exit Date "],
+    "exit_date": ["Exit Date"],
     "hr_cost": ["HR Cost"],
     "total_gross": ["Total Gross Salary", "Actual Gross Total Amount"],
     "reason_for_leaving": ["New Reason for Leaving", "Reason for Leaving"],

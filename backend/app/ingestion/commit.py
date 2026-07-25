@@ -182,19 +182,19 @@ def _insert_supplemental(db: Session, batch: UploadBatch, payload: dict) -> None
                 source_sheet=e["source_sheet"],
                 matched_base_employee=e["matched_base_employee"],
                 upload_batch_id=batch.id,
-                # PRD V1.6: only present for pay_type='bonus' entries (see
-                # ingestion/bonus_batch.py) - backpay entries don't have
+                # PRD V1.6/V1.8: only present for pay_type='bonus' entries
+                # (see ingestion/bonus_batch.py) - backpay entries don't have
                 # these keys in their staged payload, so .get() leaves them
-                # NULL rather than raising.
+                # NULL rather than raising. cost_center/work_country/state/
+                # work_station are deprecated (see models.py) - no longer
+                # produced by bonus_batch.py, so always None going forward.
                 department2=e.get("department2"),
                 department3=e.get("department3"),
                 position=e.get("position"),
                 reporting_line=e.get("reporting_line"),
                 job_grade=e.get("job_grade"),
-                cost_center=e.get("cost_center"),
-                work_country=e.get("work_country"),
-                state=e.get("state"),
-                work_station=e.get("work_station"),
+                employment_type=e.get("employment_type"),
+                location=e.get("location"),
                 joining_date=e.get("joining_date"),
                 resign_date=e.get("resign_date"),
                 full_detail_json=e.get("full_detail_json"),

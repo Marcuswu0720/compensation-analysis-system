@@ -149,11 +149,20 @@ class SupplementalPaySnapshot(Base):
     pay_type='backpay' rows stay the original loose staff_id+amount shape
     (confirmed with the user - V1.5 §0.2/PRD V1.6 background: backpay files
     really are just a simple list, not a full payroll template). pay_type=
-    'bonus' rows are the standalone "奖金批次" upload, which PRD V1.6
-    revealed is actually a full 26-field structured template (see
-    ingestion/full_fields.py's BONUS_FIELDS) - the extra descriptive columns
-    below and full_detail_json are only ever populated for those, left NULL
-    for backpay rows."""
+    'bonus' rows are the standalone "奖金批次" upload, which is actually a
+    full structured template (see ingestion/full_fields.py's BONUS_FIELDS) -
+    the extra descriptive columns below and full_detail_json are only ever
+    populated for those, left NULL for backpay rows.
+
+    `cost_center`/`work_country`/`state`/`work_station` are V1.6-era columns
+    for fields the bonus template turned out NOT to have once PRD V1.8's
+    authoritative field-mapping file arrived (the real template merges
+    state+work_station into a single `location`, and never had cost_center/
+    work_country at all - those were guesses). Left in place rather than
+    dropped, since this project's migrations only ever add columns (SQLite
+    column drops require a disruptive full-table rebuild - see
+    migrations.py); simply never written to for new rows going forward.
+    """
 
     __tablename__ = "supplemental_pay_snapshot"
 
@@ -176,13 +185,20 @@ class SupplementalPaySnapshot(Base):
     position: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reporting_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
     job_grade: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    cost_center: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    work_country: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    state: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    work_station: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cost_center: Mapped[str | None] = mapped_column(String(255), nullable=True)  # deprecated, see docstring
+    work_country: Mapped[str | None] = mapped_column(String(64), nullable=True)  # deprecated, see docstring
+    state: Mapped[str | None] = mapped_column(String(64), nullable=True)  # deprecated, see docstring
+    work_station: Mapped[str | None] = mapped_column(String(255), nullable=True)  # deprecated, see docstring
     joining_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     resign_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     full_detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # PRD V1.8: the authoritative field-mapping file revealed the bonus
+    # template has its own Entity and Employment Type columns (V1.6 assumed
+    # neither existed), and merges State+Work Station into one Location
+    # field.
+    employment_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class ExitRecord(Base):

@@ -26,13 +26,19 @@ ScopeValue = str | list[str] | None
 SALARY_TYPE_LABEL = {"base": "底薪批次", "bonus": "奖金批次", "backpay": "补发批次"}
 SALARY_TYPES = ("base", "bonus", "backpay")
 
-# "Month"/"Entity" are convenience columns prepended to every detail sheet
-# for readability across a multi-month export - NOT part of the PRD V1.6
-# field templates (neither Entity nor a month column appears in any of the
-# three field lists), so they're excluded from the 37/29/26 self-check in
+# "Month" is a convenience column prepended to every detail sheet for
+# readability across a multi-month export - NOT part of the PRD field
+# templates, so it's excluded from the field-count self-check in
 # routers/export.py on purpose. Still given the same bilingual header format
-# as every other export column per PRD V1.6's "no exceptions" rule.
-_CONVENIENCE_COLUMNS = [("month", "Month（月份）"), ("entity", "Entity（实体）")]
+# as every other export column per V1.6's "no exceptions" rule.
+#
+# PRD V1.8 note: "Entity" used to live here too (V1.6 treated it as a
+# convenience column resolved separately from the field templates), but the
+# authoritative V1.8 field-mapping file lists Entity as a real target field
+# for all three batch types - it's now a proper FieldSpec inside
+# FORMAL_FIELDS/CONTRACT_FIELDS/BONUS_FIELDS instead, so it isn't repeated
+# here (that would produce two Entity columns in the exported sheet).
+_CONVENIENCE_COLUMNS = [("month", "Month（月份）")]
 
 
 def formal_sheet_columns() -> list[tuple[str, str]]:
@@ -128,6 +134,7 @@ def _base_row_to_dict(r: MonthlyEmployeeSnapshot) -> dict:
         "commission_bonus": r.commission_bonus,
         "overtime_amount": r.overtime_amount,
         "gross_salary": r.gross_salary,
+        "employer_statutory_cost": r.employer_statutory_cost,
         "net_pay": r.net_pay,
         "hr_cost": r.hr_cost,
         **detail,
@@ -167,8 +174,9 @@ def get_bonus_detail_rows(
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
 ) -> list[dict]:
-    """The standalone 奖金批次 upload's full 26-field detail (PRD V1.6) - see
-    ingestion/bonus_batch.py. Distinct from get_backpay_detail_rows(), which
+    """The standalone 奖金批次 upload's full structured detail (PRD V1.6,
+    field list rebuilt by V1.8) - see ingestion/bonus_batch.py. Distinct
+    from get_backpay_detail_rows(), which
     stays the deliberately simple shape backpay files use."""
     q = db.query(SupplementalPaySnapshot).filter(
         SupplementalPaySnapshot.month.in_(months),
@@ -187,6 +195,7 @@ def get_bonus_detail_rows(
             {
                 "month": r.month,
                 "entity": r.entity,
+                "employment_type": r.employment_type,
                 "staff_id": r.staff_id,
                 "staff_name": r.staff_name,
                 "department1": r.department1,
@@ -195,10 +204,7 @@ def get_bonus_detail_rows(
                 "position": r.position,
                 "reporting_line": r.reporting_line,
                 "job_grade": r.job_grade,
-                "cost_center": r.cost_center,
-                "work_country": r.work_country,
-                "state": r.state,
-                "work_station": r.work_station,
+                "location": r.location,
                 "joining_date": r.joining_date,
                 "resign_date": r.resign_date,
                 "hr_cost": r.amount,
@@ -243,17 +249,18 @@ def get_backpay_detail_rows(
     ]
 
 
-EXPECTED_FIELD_COUNTS = {"正式工明细": 37, "合同工明细": 29, "奖金明细": 26}
+EXPECTED_FIELD_COUNTS = {"正式工明细": 40, "合同工明细": 33, "奖金明细": 24}
 
 
 def verify_sheet_field_count(sheet_label: str, columns: list[tuple[str, str]]) -> None:
     """PRD V1.6's single most-emphasized requirement ("本次迭代最重要的一条，
     不是可选项"): before a structured sheet is written, check that its
-    column count - minus the two convenience columns that aren't part of
-    the PRD's field templates - exactly matches the PRD's own 37/29/26.
-    Raises loudly instead of letting an incomplete file go out the door
-    silently, which is the exact failure mode PRD V1.6 exists to fix (V1.5's
-    export silently had ~20 fewer columns than it should have)."""
+    column count - minus the convenience column(s) that aren't part of the
+    PRD's field templates - exactly matches the current field count (40/33/24
+    per PRD V1.8's authoritative field-mapping file). Raises loudly instead
+    of letting an incomplete file go out the door silently, which is the
+    exact failure mode PRD V1.6 exists to fix (V1.5's export silently had
+    ~20 fewer columns than it should have)."""
     expected = EXPECTED_FIELD_COUNTS[sheet_label]
     actual = len(columns) - len(_CONVENIENCE_COLUMNS)
     if actual != expected:

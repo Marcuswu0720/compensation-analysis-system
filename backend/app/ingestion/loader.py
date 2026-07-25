@@ -14,13 +14,25 @@ from sqlalchemy.orm import Session
 from ..models import MonthlyEmployeeSnapshot, UploadBatch
 from .bonus_batch import parse_bonus_batch_workbook
 from .constants import BONUS_MONTH_OFFSET, BONUS_SHEET_KEYS, EMPLOYEE_SHEET_KEYS
-from .full_fields import ANALYSIS_KEYS, CONTRACT_FIELDS, FORMAL_FIELDS, NEW_DESCRIPTIVE_KEYS, TOP_LEVEL_DESCRIPTIVE_KEYS, extract_full_detail
+from .date_utils import format_date_value
+from .full_fields import (
+    ANALYSIS_KEYS,
+    CONTRACT_FIELDS,
+    FORMAL_FIELDS,
+    NEW_DESCRIPTIVE_KEYS,
+    TOP_LEVEL_DESCRIPTIVE_KEYS,
+    check_field_mapping,
+    extract_full_detail,
+)
+from .header_match import build_header_index
 from .normalize import NameResolver
 from .parser import get, parse_workbook
 from .salary_components import extract_salary_components
 from .supplemental import parse_supplemental_workbook
 
 SALARY_TYPES = ("base", "bonus", "backpay")
+
+ROLE_LABEL = {"formal": "正式工", "contract_pp": "合同工(PP)", "contract_flexi": "合同工(Flexi)"}
 
 
 def shift_month(month: str, offset: int) -> str:
@@ -33,13 +45,37 @@ def shift_month(month: str, offset: int) -> str:
 def _is_active_employee(role: str, row: dict, hmap: dict) -> tuple[bool, str | None]:
     if role == "formal":
         resign = get(row, hmap, "resign_date")
-        return (resign in (None, ""), str(resign) if resign else None)
+        return (resign in (None, ""), format_date_value(resign) if resign else None)
     exit_val = get(row, hmap, "exit_date")
     if exit_val is None or exit_val == "":
         return True, None
     if isinstance(exit_val, str) and exit_val.strip().lower() == "active":
         return True, None
-    return False, str(exit_val)
+    return False, format_date_value(exit_val)
+
+
+def _field_mapping_issue(scope_label: str, total: int, matched: int, missing: list[dict]) -> dict:
+    """PRD V1.8 §4: the upload-time field-mapping diagnostic - one issue per
+    sheet, always present (not just when something's wrong), so the admin
+    gets the positive "✓ 全部匹配" confirmation too, not just silence."""
+    if not missing:
+        return {
+            "issue_type": "field_mapping_check",
+            "issue_detail": f"{scope_label}：本次解析共 {total} 个目标字段，成功匹配 {matched} 个 ✓",
+            "row_count_affected": 0,
+        }
+    detail_lines = "；".join(
+        f"{m['target_label']}（尝试过的别名：{', '.join(m['tried_aliases'])}，均未在原始表头中匹配到，包括归一化大小写空格后）"
+        for m in missing
+    )
+    return {
+        "issue_type": "field_mapping_check",
+        "issue_detail": (
+            f"{scope_label}：本次解析共 {total} 个目标字段，成功匹配 {matched} 个，"
+            f"以下字段未能匹配，对应导出结果将为空：{detail_lines}"
+        ),
+        "row_count_affected": 0,
+    }
 
 
 def stage_upload(
@@ -89,13 +125,30 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
 
     employees: dict[str, dict] = {}
     gross_mismatch_count = 0
-    missing_full_detail_fields: dict[str, set[str]] = {}  # role -> field keys not found in ANY row of that role's sheet
+    field_mapping_issues: list[dict] = []
     for role in EMPLOYEE_SHEET_KEYS:
         sheet_result = parsed.by_role.get(role)
-        if not sheet_result:
+        # NOTE: parse_workbook() always populates every role key with a
+        # SheetParseResult (sheet_name=None, rows=[] when nothing matched) -
+        # `sheet_result` itself is never falsy, so the check has to be on
+        # sheet_name, not truthiness of the dataclass instance. Getting this
+        # wrong wouldn't affect the row loop below (it just does 0 iterations
+        # on an empty list either way), but it WOULD make the field-mapping
+        # diagnostic below fire a bogus "0/N matched" report for a sheet that
+        # was never in the file at all (e.g. no Contract-Flexi this month).
+        if sheet_result is None or sheet_result.sheet_name is None:
             continue
         salary_role = "formal" if role == "formal" else "contract"
         full_field_specs = FORMAL_FIELDS if salary_role == "formal" else CONTRACT_FIELDS
+
+        # PRD V1.8 §4: the field-mapping diagnostic only needs the sheet's
+        # header row, not a pass over every row - and the SAME header_index
+        # is reused below for every row's salary-component/full-detail
+        # extraction instead of being rebuilt per row.
+        header_index = build_header_index(sheet_result.rows[0].keys()) if sheet_result.rows else {}
+        total, matched, missing = check_field_mapping(header_index, full_field_specs)
+        field_mapping_issues.append(_field_mapping_issue(f"{ROLE_LABEL.get(role, role)} sheet「{sheet_result.sheet_name}」", total, matched, missing))
+
         for row in sheet_result.rows:
             sid = get(row, sheet_result.header_map, "staff_id")
             if not sid:
@@ -104,17 +157,16 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
             is_active, status_date = _is_active_employee(role, row, sheet_result.header_map)
             dept_raw = get(row, sheet_result.header_map, "department1")
             entity_raw = get(row, sheet_result.header_map, "entity")
-            components = extract_salary_components(row, salary_role)
+            components = extract_salary_components(row, salary_role, header_index)
             if components.pop("gross_salary_component_mismatch"):
                 gross_mismatch_count += 1
 
             # PRD V1.6 §2.1: capture the remaining fields (Department 2/3,
             # Position, attendance/deduction detail, etc.) the ~10 analysis
             # columns above never covered - see ingestion/full_fields.py.
-            new_descriptive, detail_json_fields, missing = extract_full_detail(
-                row, full_field_specs, top_level_keys=NEW_DESCRIPTIVE_KEYS, exclude_keys=ANALYSIS_KEYS | TOP_LEVEL_DESCRIPTIVE_KEYS
+            new_descriptive, detail_json_fields, _ = extract_full_detail(
+                row, full_field_specs, top_level_keys=NEW_DESCRIPTIVE_KEYS, exclude_keys=ANALYSIS_KEYS | TOP_LEVEL_DESCRIPTIVE_KEYS, header_index=header_index
             )
-            missing_full_detail_fields.setdefault(role, set()).update(missing)
 
             employees[sid] = {
                 "staff_id": sid,
@@ -137,7 +189,7 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
     bonuses: list[dict] = []
     for role, entity_hint in (("bonus_pp", "PalmPay"), ("bonus_flexi", "Flexi")):
         sheet_result = parsed.by_role.get(role)
-        if not sheet_result:
+        if sheet_result is None or sheet_result.sheet_name is None:
             continue
         performance_month = shift_month(month, BONUS_MONTH_OFFSET)
         for row in sheet_result.rows:
@@ -177,7 +229,7 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
                     "reason_for_leaving": get(row, exits_sheet.header_map, "reason_for_leaving"),
                     "exit_type": get(row, exits_sheet.header_map, "exit_type"),
                     "attrition_type": get(row, exits_sheet.header_map, "attrition_type"),
-                    "exit_date": str(get(row, exits_sheet.header_map, "exit_date_record") or "") or None,
+                    "exit_date": format_date_value(get(row, exits_sheet.header_map, "exit_date_record")) or None,
                 }
             )
 
@@ -200,20 +252,7 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
                 "row_count_affected": 0,
             }
         )
-    role_label = {"formal": "正式工", "contract_pp": "合同工(PP)", "contract_flexi": "合同工(Flexi)"}
-    for role, missing_keys in missing_full_detail_fields.items():
-        if missing_keys:
-            issues.append(
-                {
-                    "issue_type": "full_detail_field_not_found",
-                    "issue_detail": (
-                        f"{role_label.get(role, role)} sheet 里，V1.6 完整字段清单中的以下字段没能在表头里找到匹配列，"
-                        f"导出时这些字段会是空的，需要人工核实原始表的实际列名是否和规范不一致："
-                        + "、".join(sorted(missing_keys))
-                    ),
-                    "row_count_affected": 0,
-                }
-            )
+    issues.extend(field_mapping_issues)
     if gross_mismatch_count:
         issues.append(
             {
@@ -322,12 +361,13 @@ def _stage_supplemental(db: Session, month: str, file_bytes: bytes, salary_type:
 
 
 def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
-    """The standalone 奖金批次 upload (PRD V1.6): a full 26-field structured
-    template, not the loose staff_id+amount shape backpay uses - see
-    ingestion/bonus_batch.py. The file has no Entity column of its own (per
-    the PRD's field list), so entity is resolved the same way
-    _stage_supplemental already does for backpay: fall back to whatever
-    entity the matched base-batch employee has that month."""
+    """The standalone 奖金批次 upload: a full structured template, not the
+    loose staff_id+amount shape backpay uses - see ingestion/bonus_batch.py.
+    PRD V1.8 corrected the V1.6 assumption that this file has no Entity
+    column of its own - it does, and is parsed directly like every other
+    field; the fallback to the matched base-batch employee's entity (as
+    _stage_supplemental already does for backpay) only kicks in when a row's
+    own Entity is missing/blank."""
     parsed = parse_bonus_batch_workbook(io.BytesIO(file_bytes))
     resolver = NameResolver(db, month)
     resolver.prepare("department", [r["department1_raw"] for r in parsed.rows])
@@ -336,12 +376,18 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
         e.staff_id: e for e in db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.month == month).all()
     }
 
+    def _entity_source(r: dict) -> str | None:
+        base = base_employees.get(r["staff_id"])
+        return r.get("entity_raw") or (base.entity if base else None)
+
+    resolver.prepare("entity", [_entity_source(r) for r in parsed.rows])
+
     entries = []
     unmatched_count = 0
     for r in parsed.rows:
         base = base_employees.get(r["staff_id"])
         department1_raw = r["department1_raw"] or (base.department1_raw if base else None)
-        entity = base.entity if base else None
+        entity_source = _entity_source(r)
         matched = base is not None
         if not matched:
             unmatched_count += 1
@@ -350,7 +396,8 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
                 "staff_id": r["staff_id"],
                 "staff_name": r["staff_name"] or (base.staff_name if base else None),
                 "department1": resolver.resolve("department", department1_raw),
-                "entity": entity,
+                "entity": resolver.resolve("entity", entity_source) if entity_source else None,
+                "employment_type": r.get("employment_type"),
                 "amount": r["amount"],
                 "source_sheet": r["source_sheet"],
                 "matched_base_employee": matched,
@@ -359,10 +406,7 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
                 "position": r.get("position"),
                 "reporting_line": r.get("reporting_line"),
                 "job_grade": r.get("job_grade"),
-                "cost_center": r.get("cost_center"),
-                "work_country": r.get("work_country"),
-                "state": r.get("state"),
-                "work_station": r.get("work_station"),
+                "location": r.get("location"),
                 "joining_date": r.get("joining_date"),
                 "resign_date": r.get("resign_date"),
                 "full_detail_json": json.dumps(r["full_detail_json_fields"]),
@@ -380,23 +424,14 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
                 "issue_detail": (
                     f"有 {unmatched_count} 条记录的员工工号在 {month} 的底薪批次里找不到（可能底薪还没上传，"
                     "或该员工当月不在职），这些金额仍会计入公司/部门总成本，但在归因分析里不会被归到具体某个人身上；"
-                    "由于奖金文件本身没有实体列，这些记录也无法确定实体，权限范围过滤时会被当作不属于任何实体"
+                    "如果这些记录自己的 Entity 列也是空的，会被归入"
+                    "「(未标注实体)」分类，权限范围过滤时不会精确出现在某个实体的统计里"
                 ),
                 "row_count_affected": unmatched_count,
             }
         )
-    if parsed.missing_fields:
-        issues.append(
-            {
-                "issue_type": "full_detail_field_not_found",
-                "issue_detail": (
-                    "奖金批次 sheet 里，V1.6 完整字段清单中的以下字段没能在表头里找到匹配列，这是全新的批次格式，"
-                    "字段名从未跟真实数据核对过，导出时这些字段会是空的，务必人工核实原始表的实际列名："
-                    + "、".join(sorted(parsed.missing_fields))
-                ),
-                "row_count_affected": 0,
-            }
-        )
+    for report in parsed.field_mapping_reports:
+        issues.append(_field_mapping_issue(f"奖金批次 sheet「{report.sheet_name}」", report.total, report.matched, report.missing))
     issues.extend(resolver.flush_issues())
 
     total_amount = sum(e["amount"] for e in entries)

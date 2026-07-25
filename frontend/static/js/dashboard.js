@@ -45,8 +45,14 @@ async function initShell() {
 }
 
 // ---------- upload tab ----------
-function issueSeverity(issueType) {
-  return ['missing_field', 'unrecognized_sheet'].includes(issueType) ? 'severe' : '';
+function issueSeverity(issue) {
+  // field_mapping_check (PRD V1.8 §4) fires on every upload, success or not
+  // - only the "some target field didn't match" case should read as a
+  // warning; the "✓ 全部匹配" case is a positive confirmation, not a problem.
+  if (issue.issue_type === 'field_mapping_check') {
+    return issue.issue_detail.includes('✓') ? 'good' : 'severe';
+  }
+  return ['missing_field', 'unrecognized_sheet'].includes(issue.issue_type) ? 'severe' : '';
 }
 
 function renderBatch(batch) {
@@ -81,7 +87,7 @@ function renderBatch(batch) {
     issuesEl.innerHTML = '<li style="background:rgba(30,158,99,0.12);border-color:rgba(30,158,99,0.3);">未发现异常，所有关键字段均成功映射</li>';
   } else {
     issuesEl.innerHTML = batch.issues
-      .map((i) => `<li class="${issueSeverity(i.issue_type)}"><strong>[${i.issue_type}]</strong> ${i.issue_detail}</li>`)
+      .map((i) => `<li class="${issueSeverity(i)}"><strong>[${i.issue_type}]</strong> ${i.issue_detail}</li>`)
       .join('');
   }
 

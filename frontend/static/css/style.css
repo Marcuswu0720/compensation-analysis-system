@@ -113,6 +113,7 @@ th { color: var(--muted); font-weight: 500; }
   background: rgba(185, 137, 0, 0.12); border: 1px solid rgba(185, 137, 0, 0.3);
 }
 .issue-list li.severe { background: rgba(214, 69, 69, 0.12); border-color: rgba(214, 69, 69, 0.35); }
+.issue-list li.good { background: rgba(30, 158, 99, 0.12); border-color: rgba(30, 158, 99, 0.3); }
 
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
 .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }

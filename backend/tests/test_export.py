@@ -174,7 +174,7 @@ def test_build_workbook_watermark_sheet_and_data_sheets():
     assert "保密" in info_rows[3][0]
 
     formal_header = next(wb["正式工明细"].iter_rows(values_only=True))
-    assert formal_header[:5] == ("Month（月份）", "Entity（实体）", "Staff ID（员工工号）", "Staff Name（员工姓名）", "Department 1（一级部门）")
+    assert formal_header[:5] == ("Month（月份）", "Entity（公司实体）", "Staff ID（工号）", "Employment Type（员工类别）", "Staff Name（姓名）")
 
 
 def test_build_workbook_only_base_selected_omits_other_sheets():
@@ -295,19 +295,19 @@ def test_every_detail_sheet_header_is_bilingual():
 def test_formal_sheet_columns_match_prd_field_count():
     columns = formal_sheet_columns()
     verify_sheet_field_count("正式工明细", columns)  # must not raise
-    assert len(columns) - 2 == 37 == len(FORMAL_FIELDS)
+    assert len(columns) - 1 == 40 == len(FORMAL_FIELDS)
 
 
 def test_contract_sheet_columns_match_prd_field_count():
     columns = contract_sheet_columns()
     verify_sheet_field_count("合同工明细", columns)  # must not raise
-    assert len(columns) - 2 == 29 == len(CONTRACT_FIELDS)
+    assert len(columns) - 1 == 33 == len(CONTRACT_FIELDS)
 
 
 def test_bonus_sheet_columns_match_prd_field_count():
     columns = bonus_sheet_columns()
     verify_sheet_field_count("奖金明细", columns)  # must not raise
-    assert len(columns) - 2 == 26 == len(BONUS_FIELDS)
+    assert len(columns) - 1 == 24 == len(BONUS_FIELDS)
 
 
 def test_field_count_self_check_raises_loudly_on_mismatch():
@@ -319,7 +319,7 @@ def test_field_count_self_check_raises_loudly_on_mismatch():
         assert False, "expected ValueError"
     except ValueError as e:
         assert "导出字段数量与规范不符" in str(e)
-        assert "37" in str(e)
+        assert "40" in str(e)
 
 
 def test_actual_exported_sheets_have_exactly_the_prd_column_counts(db_session):
@@ -343,8 +343,8 @@ def test_actual_exported_sheets_have_exactly_the_prd_column_counts(db_session):
 
     formal_header = next(wb["正式工明细"].iter_rows(values_only=True))
     contract_header = next(wb["合同工明细"].iter_rows(values_only=True))
-    assert len(formal_header) - 2 == 37  # minus 月份/实体 convenience columns
-    assert len(contract_header) - 2 == 29
+    assert len(formal_header) - 1 == 40  # minus the 月份 convenience column
+    assert len(contract_header) - 1 == 33
 
 
 def test_field_count_self_check_wired_into_workbook_build():

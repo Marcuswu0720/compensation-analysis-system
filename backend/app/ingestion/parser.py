@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import openpyxl
 
 from .constants import FIELD_ALIASES, SHEET_DEFAULT_ENTITY, SHEET_PATTERNS, SHEET_ROLE_ORDER, SUMMARY_ROW_MARKERS
+from .header_match import build_header_index, find_alias
 
 
 @dataclass
@@ -42,13 +43,18 @@ def is_summary_row(sid) -> bool:
 
 
 def build_header_map(raw_headers: list) -> tuple[dict[str, str], list[str | None]]:
+    """PRD V1.8 §1: matches FIELD_ALIASES against the sheet's actual headers
+    with case/whitespace-normalized comparison (see header_match.py), not
+    exact string equality - a header spelled "Staff name" or "Joining Date "
+    (trailing space) is still recognized without needing a new alias for
+    every casing/whitespace variant that shows up in a new month's file."""
     clean = [str(h).strip() if h else None for h in raw_headers]
+    index = build_header_index(clean)
     result = {}
     for canonical, aliases in FIELD_ALIASES.items():
-        for a in aliases:
-            if a in clean:
-                result[canonical] = a
-                break
+        raw = find_alias(index, aliases)
+        if raw is not None:
+            result[canonical] = raw
     return result, clean
 
 
