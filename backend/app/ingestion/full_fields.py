@@ -22,6 +22,7 @@ confirm or correct the alias before fully trusting the exported values -
 see README's "已知限制" section.
 """
 
+import datetime
 from dataclasses import dataclass
 
 
@@ -169,6 +170,20 @@ BONUS_TOP_LEVEL_KEYS = NEW_DESCRIPTIVE_KEYS | {"job_grade", "cost_center", "work
 BONUS_EXCLUDE_KEYS = {"staff_id", "staff_name", "department1", "hr_cost"}
 
 
+def _json_safe(value):
+    """openpyxl hands back a real `datetime.datetime`/`datetime.date` object
+    for any date-formatted cell (Joining Date, Resign Date, etc.) - unlike
+    the handful of pre-V1.6 date fields (resign_or_exit_date), which were
+    always explicitly str()'d at the point of extraction, these ~50 new
+    fields are generic pass-throughs with no per-field special-casing. Doing
+    the conversion once, here, means no future field needs its own
+    stringification code, and the staged payload's `json.dumps()` call
+    (loader.py's stage_upload) never crashes on a raw datetime again."""
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    return value
+
+
 def extract_full_detail(
     row: dict, specs: list[FieldSpec], top_level_keys: set[str], exclude_keys: set[str]
 ) -> tuple[dict, dict, list[str]]:
@@ -199,7 +214,7 @@ def extract_full_detail(
         found = False
         for alias in spec.source_aliases:
             if alias in row:
-                value = row[alias]
+                value = _json_safe(row[alias])
                 found = True
                 break
         if not found:

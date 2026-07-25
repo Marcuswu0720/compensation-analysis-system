@@ -5,6 +5,7 @@ wiring that carries the new descriptive columns + full_detail_json through
 to the confirmed snapshot tables.
 """
 
+import datetime
 import io
 import json
 
@@ -65,6 +66,51 @@ def test_extract_full_detail_splits_top_level_vs_detail_json():
     assert top_level == {"position": "Engineer", "state": None}
     assert detail_json == {"performance_std": 5000}
     assert missing == ["state"]
+
+
+def test_extract_full_detail_converts_datetime_cells_to_json_safe_strings():
+    """Regression test: openpyxl hands back real datetime.datetime objects
+    for date-formatted cells (Joining Date, Resign Date, etc.), not strings
+    like the synthetic test fixtures use - loader.py's later json.dumps()
+    call on the staged payload used to crash with "Object of type datetime
+    is not JSON serializable" the moment a real file had an actual date cell
+    in one of the ~50 new V1.6 fields."""
+    specs = [FieldSpec("joining_date", "Joining Date", "入职日期", ("Joining Date",), False)]
+    row = {"Joining Date": datetime.datetime(2020, 1, 15)}
+    top_level, _, missing = extract_full_detail(row, specs, top_level_keys={"joining_date"}, exclude_keys=set())
+    assert missing == []
+    assert top_level["joining_date"] == "2020-01-15T00:00:00"
+    json.dumps(top_level)  # must not raise
+
+
+def test_stage_base_handles_real_datetime_cells_without_crashing(db_session):
+    """End-to-end version of the datetime regression above, through the
+    actual upload path a real Excel file with a date-formatted Joining Date
+    column goes through."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _sheet(
+        wb,
+        "Formal",
+        ["Staff ID", "Staff Name", "Entity", "Department 1", "Job Grade", "HR Cost", "Resign Date", "Joining Date"],
+        [["E001", "Alice", "PalmPay", "Sales", "P1", 1000, None, datetime.datetime(2020, 1, 15)]],
+    )
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    from app.ingestion.loader import stage_upload
+
+    batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="x.xlsx", uploaded_by="t", salary_type="base")
+    payload = json.loads(batch.staged_data)
+    alice = next(e for e in payload["employees"] if e["staff_id"] == "E001")
+    assert alice["joining_date"] == "2020-01-15T00:00:00"
+
+
+def test_bonus_batch_parser_handles_real_datetime_cells_without_crashing():
+    wb_bytes = build_full_bonus_workbook([_bonus_row(**{"Joining Date": datetime.datetime(2021, 3, 1)})])
+    result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))
+    json.dumps(result.rows[0])  # must not raise
+    assert result.rows[0]["joining_date"] == "2021-03-01T00:00:00"
 
 
 def test_stage_base_reports_missing_full_detail_fields_for_minimal_sheet(db_session):
