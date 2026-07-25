@@ -207,6 +207,27 @@ class ViewerPermission(Base):
     revoked_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class DownloadLog(Base):
+    """Audit trail for salary-detail Excel exports (PRD V1.3 §4) - more
+    important than logging a web page view, because once a file is
+    downloaded it's completely outside the system's access control forever
+    (can be forwarded/saved/screenshotted); if the data ever leaks, this is
+    what lets someone reconstruct which download it came from. Append-only,
+    like DataOperationLog - nothing here is ever edited or deleted."""
+
+    __tablename__ = "download_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    download_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    entity_scope: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department_scope: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    month_range_start: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    month_range_end: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class DataOperationLog(Base):
     """Audit trail for anything that changes official data (PRD V1.1 §3.3),
     kept even after the batch it refers to is deleted/superseded - this table

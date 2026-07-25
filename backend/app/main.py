@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 
 from .database import Base, engine
 from .migrations import run_migrations
-from .routers import auth, chat, query, upload
+from .routers import auth, chat, export, query, upload
 
 Base.metadata.create_all(bind=engine)
 run_migrations(engine)
@@ -17,6 +17,7 @@ app.include_router(auth.router)
 app.include_router(upload.router)
 app.include_router(query.router)
 app.include_router(chat.router)
+app.include_router(export.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")

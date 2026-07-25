@@ -15,6 +15,7 @@
     <button class="tab-btn active admin-only" data-tab="upload">上传数据</button>
     <button class="tab-btn" data-tab="trend">趋势查询</button>
     <button class="tab-btn" data-tab="categories">薪资类目</button>
+    <button class="tab-btn" data-tab="export">下载明细</button>
     <button class="tab-btn" data-tab="chat">问答</button>
     <button class="tab-btn admin-only" data-tab="permissions" style="display:none;">用户权限</button>
   </div>
@@ -223,6 +224,39 @@
     </div>
   </div>
 
+  <!-- 下载明细 -->
+  <div class="tab-panel" id="tab-export">
+    <div class="card">
+      <h3>员工级薪酬明细导出</h3>
+      <div class="row">
+        <div>
+          <label>部门（不选=你有权限的全部部门）</label>
+          <select id="exportDept"><option value="">全部</option></select>
+        </div>
+        <div>
+          <label>实体（不选=你有权限的全部实体）</label>
+          <select id="exportEntity"><option value="">全部</option></select>
+        </div>
+        <div>
+          <label>起始月份</label>
+          <select id="exportStart"></select>
+        </div>
+        <div>
+          <label>结束月份</label>
+          <select id="exportEnd"></select>
+        </div>
+        <div style="flex:0;">
+          <button id="exportDownloadBtn">下载 Excel</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        导出内容包含员工姓名、工号及具体薪资明细，范围只会限定在你当前被授权可见的部门/实体之内。
+        下载行为会被记录（下载人、时间、范围、条数），请遵守公司薪酬保密规定，不得外传。
+      </div>
+      <div class="error" id="exportError"></div>
+    </div>
+  </div>
+
   <!-- 问答 -->
   <div class="tab-panel" id="tab-chat">
     <div class="card">
@@ -306,6 +340,12 @@
     <div class="card" style="margin-top:16px;">
       <h3>操作日志（上传/修正/删除审计记录）</h3>
       <div id="opLogList"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>下载记录（谁在什么时候下载过什么范围的薪酬明细）</h3>
+      <div class="muted">下载一旦发生就完全脱离系统权限控制，这份记录是万一数据外泄时定位来源用的。</div>
+      <div id="downloadLogList" style="margin-top:8px;"></div>
     </div>
   </div>
 </div>

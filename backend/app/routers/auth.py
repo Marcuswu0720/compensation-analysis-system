@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..compute.trends import list_departments_by_entity
 from ..config import settings
 from ..database import get_db
-from ..models import DataOperationLog, User, ViewerPermission
+from ..models import DataOperationLog, DownloadLog, User, ViewerPermission
 from ..schemas import CreateUserRequest, GrantPermissionRequest, LoginRequest, ResetPasswordRequest, SetUserActiveRequest
 from ..security import create_session_token, get_current_user, hash_password, normalize_username, require_admin, verify_password
 
@@ -202,6 +202,27 @@ def operation_log(db: Session = Depends(get_db), _: User = Depends(require_admin
             "target_month": log.target_month,
             "operation_time": log.operation_time.isoformat(),
             "detail": log.detail,
+        }
+        for log in logs
+    ]
+
+
+@router.get("/download-log")
+def download_log(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """PRD V1.3 §4: who downloaded what range, when - a downloaded file is
+    outside the system's access control the moment it leaves, so this is
+    the trace that matters most if salary data ever leaks."""
+    logs = db.query(DownloadLog).order_by(DownloadLog.download_time.desc()).limit(200).all()
+    return [
+        {
+            "id": log.id,
+            "username": log.username,
+            "download_time": log.download_time.isoformat(),
+            "entity_scope": log.entity_scope,
+            "department_scope": log.department_scope,
+            "month_range_start": log.month_range_start,
+            "month_range_end": log.month_range_end,
+            "row_count": log.row_count,
         }
         for log in logs
     ]

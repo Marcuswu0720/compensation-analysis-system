@@ -264,6 +264,58 @@ async function populateMeta() {
     document.getElementById('catCompareMonth').value = meta.months[meta.months.length - 1];
     document.getElementById('compMonth').value = meta.months[meta.months.length - 1];
   }
+
+  fillSelect('exportDept', meta.departments, true);
+  fillSelect('exportEntity', meta.entities, true);
+  fillSelect('exportStart', meta.months, false);
+  fillSelect('exportEnd', meta.months, false);
+  if (meta.months.length) {
+    document.getElementById('exportStart').value = meta.months[0];
+    document.getElementById('exportEnd').value = meta.months[meta.months.length - 1];
+  }
+}
+
+// ---------- export tab (download employee-level salary detail) ----------
+async function downloadBlob(path, body) {
+  const resp = await apiFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.detail || `请求失败 (${resp.status})`);
+  }
+  const disposition = resp.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)/);
+  const filename = match ? decodeURIComponent(match[1]) : '薪酬明细导出.xlsx';
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function initExportTab() {
+  document.getElementById('exportDownloadBtn').addEventListener('click', async () => {
+    const errEl = document.getElementById('exportError');
+    errEl.textContent = '';
+    const payload = {
+      department: document.getElementById('exportDept').value || null,
+      entity: document.getElementById('exportEntity').value || null,
+      start_month: document.getElementById('exportStart').value || null,
+      end_month: document.getElementById('exportEnd').value || null,
+    };
+    try {
+      await downloadBlob('/api/export/detail', payload);
+    } catch (e) {
+      errEl.textContent = e.message;
+    }
+  });
 }
 
 // ---------- trend tab ----------
@@ -648,6 +700,21 @@ async function loadOperationLog() {
     : '<div class="muted">暂无操作记录</div>';
 }
 
+async function loadDownloadLog() {
+  const logs = await apiJson('/api/auth/download-log');
+  document.getElementById('downloadLogList').innerHTML = logs.length
+    ? logs
+        .map(
+          (l) => `
+      <div class="upload-list-item">
+        <span>${new Date(l.download_time).toLocaleString('zh-CN')} · ${l.username} · ${l.entity_scope || '-'} / ${l.department_scope || '-'} · ${l.month_range_start} 至 ${l.month_range_end}</span>
+        <span class="muted">${fmtInt(l.row_count)} 条记录</span>
+      </div>`
+        )
+        .join('')
+    : '<div class="muted">暂无下载记录</div>';
+}
+
 function initPermissionsTab() {
   if (currentUserRole !== 'admin') return;
 
@@ -711,6 +778,7 @@ function initPermissionsTab() {
     await loadEntityDepartments();
     await loadCurrentPermissions();
     await loadOperationLog();
+    await loadDownloadLog();
   });
 
   loadUserList();
@@ -722,6 +790,7 @@ function initPermissionsTab() {
   initUploadTab();
   initTrendTab();
   initCategoryTab();
+  initExportTab();
   initChatTab();
   initPermissionsTab();
   await populateMeta();

@@ -66,3 +66,10 @@ class SetUserActiveRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     new_password: str
+
+
+class ExportDetailRequest(BaseModel):
+    department: str | None = None
+    entity: str | None = None
+    start_month: str | None = None
+    end_month: str | None = None
