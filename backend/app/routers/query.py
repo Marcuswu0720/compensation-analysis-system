@@ -62,6 +62,8 @@ def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user
 def category_trend(payload: CategoryTrendRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if not payload.categories:
         raise HTTPException(status_code=400, detail="请至少选择一个薪资类目")
+    if payload.employment_type not in (None, "Formal", "Contract"):
+        raise HTTPException(status_code=400, detail="employment_type 只能是 Formal、Contract 或不填（表示全部）")
     scope = get_allowed_scope(db, user)
     department, entity = resolve_requested_filters(scope, payload.department, payload.entity)
     months = None
@@ -70,7 +72,14 @@ def category_trend(payload: CategoryTrendRequest, db: Session = Depends(get_db),
         months = [m for m in available if payload.start_month <= m <= payload.end_month]
     try:
         return get_categories_trend(
-            db, categories=payload.categories, months=months, department=department, entity=entity, scope_rules=scope.rules
+            db,
+            categories=payload.categories,
+            months=months,
+            department=department,
+            entity=entity,
+            scope_rules=scope.rules,
+            employment_type=payload.employment_type,
+            per_capita=payload.per_capita,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

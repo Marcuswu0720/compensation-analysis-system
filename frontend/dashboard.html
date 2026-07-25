@@ -157,6 +157,15 @@
           <label>结束月份</label>
           <select id="catTrendEnd"></select>
         </div>
+        <div>
+          <label>用工类型</label>
+          <select id="catTrendEmploymentType">
+            <option value="all">全部</option>
+            <option value="Formal">仅正式工</option>
+            <option value="Contract">仅合同工</option>
+            <option value="compare">正式工 vs 合同工</option>
+          </select>
+        </div>
         <div style="flex:0;">
           <button id="catTrendQueryBtn">查询</button>
         </div>
@@ -168,6 +177,15 @@
         <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:16px;">
           <input type="radio" name="catTrendMode" id="catTrendModeCompare" value="compare"> 两点比较模式
         </label>
+        <span style="margin-left:24px;">
+          统计口径：
+          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+            <input type="radio" name="catStatBasis" id="catStatBasisTotal" value="total" checked> 总额
+          </label>
+          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:8px;">
+            <input type="radio" name="catStatBasis" id="catStatBasisPerCapita" value="per_capita"> 人均
+          </label>
+        </span>
         <span id="catTrendViewToggleWrap" style="margin-left:24px;">
           视图：
           <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
@@ -177,6 +195,9 @@
             <input type="radio" name="catTrendView" id="catTrendViewPct" value="pct"> 增长百分比（以起始月为基准）
           </label>
         </span>
+      </div>
+      <div class="muted" id="catTrendLineCountHint" style="display:none;margin-top:6px;">
+        当前展示的线条较多，建议减少类目选择以提升可读性。
       </div>
       <div class="error" id="catTrendError"></div>
 
@@ -189,9 +210,10 @@
       </div>
       <div id="catTrendCompareResult" style="display:none;">
         <table id="catCompareTwoPointTable" style="margin-top:16px;">
-          <thead><tr><th>类目</th><th>起始月金额 (₦)</th><th>结束月金额 (₦)</th><th>差值 (₦)</th><th>涨跌幅</th></tr></thead>
+          <thead id="catCompareTwoPointHead"></thead>
           <tbody></tbody>
         </table>
+        <div id="catCompareTreeView" style="margin-top:16px;"></div>
       </div>
     </div>
 

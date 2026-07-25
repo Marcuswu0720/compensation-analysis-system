@@ -419,10 +419,17 @@ function initTrendTab() {
 
 // ---------- salary categories tab ----------
 let catTrendChart = null;
-let catTrendCache = []; // last /api/category-trend response, re-rendered on view-toggle without refetching
+// { employmentTypeMode: 'all'|'Formal'|'Contract'|'compare', perCapita: bool,
+//   data: { all?: rows, Formal?: rows, Contract?: rows } } - last query's
+// response(s), re-rendered on view-toggle without refetching. PRD V1.9 §3.1:
+// "compare" fetches Formal+Contract as two plain calls to the SAME
+// get_categories_trend()/employment_type filter - no separate "compare"
+// concept exists server-side.
+let catTrendCache = null;
 let catTrendCacheMeta = []; // [{value, label}] for the categories in catTrendCache
 
 const CAT_TREND_COLORS = ['#2f6fed', '#1e9e63', '#e08a2b', '#c0392b', '#8e44ad', '#16a085', '#7f8c8d', '#d35400', '#2980b9', '#27ae60'];
+const fmtSignedMoney = (n) => `${n >= 0 ? '+' : ''}${fmtMoney(n)}`;
 
 function renderCatTrendCategoryChecklist(categories) {
   const container = document.getElementById('catTrendCategoryChecklist');
@@ -448,11 +455,39 @@ function currentCatTrendView() {
   return document.querySelector('input[name="catTrendView"]:checked').value;
 }
 
+function currentCatStatBasis() {
+  return document.querySelector('input[name="catStatBasis"]:checked').value; // 'total' | 'per_capita'
+}
+
+function currentCatEmploymentTypeMode() {
+  return document.getElementById('catTrendEmploymentType').value; // 'all' | 'Formal' | 'Contract' | 'compare'
+}
+
 function updateCatTrendModeVisibility() {
   const isCompare = currentCatTrendMode() === 'compare';
   document.getElementById('catTrendTrendResult').style.display = isCompare ? 'none' : '';
   document.getElementById('catTrendCompareResult').style.display = isCompare ? '' : 'none';
   document.getElementById('catTrendViewToggleWrap').style.display = isCompare ? 'none' : '';
+}
+
+// PRD V1.9 §3.1: "对比模式" is two plain calls to get_categories_trend()
+// (employment_type='Formal' and 'Contract'), never a third server-side mode
+// - this just describes, for rendering purposes, which of those calls (plus
+// the always-available "全部" call) apply to the current selection.
+function catSeriesList(cache) {
+  if (cache.employmentTypeMode === 'compare') {
+    return [
+      { key: 'Formal', label: '正式工', rows: cache.data.Formal || [], dashed: false },
+      { key: 'Contract', label: '合同工', rows: cache.data.Contract || [], dashed: true },
+    ];
+  }
+  const label = cache.employmentTypeMode === 'Formal' ? '（仅正式工）' : cache.employmentTypeMode === 'Contract' ? '（仅合同工）' : '';
+  return [{ key: 'all', label, rows: cache.data.all || [], dashed: false }];
+}
+
+function statValue(row, catKey, statKey) {
+  const src = statKey === 'categories' ? row.categories : row[statKey];
+  return (src && src[catKey]) ?? 0;
 }
 
 // Shared by the trend view's percentage mode and the two-point comparison
@@ -470,62 +505,189 @@ function pctChangeLabel(baseline, current) {
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
 }
 
-function renderCatTrendChartAndTable(rows, categoryMeta) {
+function renderCatTrendChartAndTable(cache, categoryMeta) {
+  const { perCapita } = cache;
   const view = currentCatTrendView();
-  const labels = rows.map((r) => r.month);
+  const series = catSeriesList(cache);
+  const months = Array.from(new Set(series.flatMap((s) => s.rows.map((r) => r.month)))).sort();
 
-  const datasets = categoryMeta.map((c, idx) => {
-    const raw = rows.map((r) => r.categories[c.value] ?? 0);
-    const data = view === 'pct' ? raw.map((v) => pctChange(raw[0], v).pct) : raw;
+  document.getElementById('catTrendLineCountHint').style.display = series.length > 1 && categoryMeta.length > 4 ? '' : 'none';
+
+  const rowsByMonthPerSeries = series.map((s) => Object.fromEntries(s.rows.map((r) => [r.month, r])));
+
+  const datasets = [];
+  categoryMeta.forEach((c, idx) => {
     const color = CAT_TREND_COLORS[idx % CAT_TREND_COLORS.length];
-    return { label: c.label, data, borderColor: color, backgroundColor: color + '26', tension: 0.25, spanGaps: true };
+    series.forEach((s, si) => {
+      const byMonth = rowsByMonthPerSeries[si];
+      const raw = months.map((m) => (byMonth[m] ? statValue(byMonth[m], c.value, perCapita ? 'per_capita' : 'categories') : null));
+      const baseline = raw.find((v) => v !== null) ?? 0;
+      const plotData = view === 'pct' ? raw.map((v) => (v === null ? null : pctChange(baseline, v).pct)) : raw;
+      datasets.push({
+        label: `${c.label}${s.label}`,
+        data: plotData,
+        borderColor: color,
+        backgroundColor: color + '26',
+        borderDash: s.dashed ? [6, 4] : [],
+        tension: 0.25,
+        spanGaps: true,
+      });
+    });
+    // PRD V1.9 §2.2: median must be shown alongside the mean, not hidden -
+    // charted as a same-color dashed line when there's only one series so
+    // it doesn't collide with the solid/dashed = Formal/Contract distinction
+    // compare mode already uses (median stays visible in the table either way).
+    if (perCapita && series.length === 1) {
+      const byMonth = rowsByMonthPerSeries[0];
+      const raw = months.map((m) => (byMonth[m] ? statValue(byMonth[m], c.value, 'median') : null));
+      const baseline = raw.find((v) => v !== null) ?? 0;
+      const plotData = view === 'pct' ? raw.map((v) => (v === null ? null : pctChange(baseline, v).pct)) : raw;
+      datasets.push({
+        label: `${c.label} 中位数`,
+        data: plotData,
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderDash: [3, 3],
+        tension: 0.25,
+        spanGaps: true,
+      });
+    }
   });
 
   if (catTrendChart) catTrendChart.destroy();
   catTrendChart = new Chart(document.getElementById('catTrendChart'), {
     type: 'line',
-    data: { labels, datasets },
-    options: { scales: { y: { title: { display: true, text: view === 'pct' ? '相对起始月涨跌 (%)' : '金额 (₦)' } } } },
+    data: { labels: months, datasets },
+    options: { scales: { y: { title: { display: true, text: view === 'pct' ? '相对起始月涨跌 (%)' : (perCapita ? '人均金额 (₦)' : '金额 (₦)') } } } },
   });
 
-  document.getElementById('catTrendTableHead').innerHTML =
-    `<tr><th>月份</th><th>人数</th>${categoryMeta.map((c) => `<th>${c.label}</th>`).join('')}</tr>`;
-  document.querySelector('#catTrendTable tbody').innerHTML = rows
-    .map((r) => {
-      const cells = categoryMeta
-        .map((c) => {
-          const raw = r.categories[c.value] ?? 0;
-          if (view === 'absolute') return `<td>${fmtMoney(raw)}</td>`;
-          const baseline = rows[0].categories[c.value] ?? 0;
-          return `<td>${pctChangeLabel(baseline, raw)}</td>`;
-        })
-        .join('');
-      return `<tr><td>${r.month}</td><td>${fmtInt(r.headcount)}</td>${cells}</tr>`;
+  const headCells = ['月份'];
+  series.forEach((s) => headCells.push(`人数${s.label}`));
+  categoryMeta.forEach((c) => {
+    series.forEach((s) => {
+      if (perCapita) {
+        headCells.push(`${c.label}${s.label} 人均`);
+        headCells.push(`${c.label}${s.label} 中位数`);
+      } else {
+        headCells.push(`${c.label}${s.label}`);
+      }
+    });
+  });
+  document.getElementById('catTrendTableHead').innerHTML = `<tr>${headCells.map((h) => `<th>${h}</th>`).join('')}</tr>`;
+
+  document.querySelector('#catTrendTable tbody').innerHTML = months
+    .map((m) => {
+      const cells = [`<td>${m}</td>`];
+      series.forEach((s, si) => {
+        const row = rowsByMonthPerSeries[si][m];
+        cells.push(`<td>${row ? fmtInt(row.headcount) : '-'}</td>`);
+      });
+      categoryMeta.forEach((c) => {
+        series.forEach((s, si) => {
+          const row = rowsByMonthPerSeries[si][m];
+          if (!row) {
+            cells.push(perCapita ? '<td>-</td><td>-</td>' : '<td>-</td>');
+            return;
+          }
+          if (perCapita) {
+            cells.push(`<td>${fmtMoney(statValue(row, c.value, 'per_capita'))}</td>`);
+            cells.push(`<td>${fmtMoney(statValue(row, c.value, 'median'))}</td>`);
+          } else {
+            cells.push(`<td>${fmtMoney(statValue(row, c.value, 'categories'))}</td>`);
+          }
+        });
+      });
+      return `<tr>${cells.join('')}</tr>`;
     })
     .join('');
 }
 
-function renderCatCompareTable(rows, categoryMeta, startMonth, endMonth) {
+function renderCatCompareTable(cache, categoryMeta, startMonth, endMonth) {
+  const { perCapita, employmentTypeMode, data } = cache;
+  if (employmentTypeMode === 'compare') {
+    renderCatCompareTree(cache, categoryMeta, startMonth, endMonth);
+    return;
+  }
+  document.getElementById('catCompareTreeView').innerHTML = '';
+
+  const rows = data.all || [];
   const startRow = rows.find((r) => r.month === startMonth);
   const endRow = rows.find((r) => r.month === endMonth);
-  document.querySelector('#catCompareTwoPointTable tbody').innerHTML = categoryMeta
-    .map((c) => {
-      if (!startRow || !endRow) {
-        return `<tr><td>${c.label}</td><td colspan="4" class="muted">起始月或结束月在所选范围内没有数据</td></tr>`;
-      }
-      const startVal = startRow.categories[c.value] ?? 0;
-      const endVal = endRow.categories[c.value] ?? 0;
-      const diff = endVal - startVal;
-      return `<tr><td>${c.label}</td><td>${fmtMoney(startVal)}</td><td>${fmtMoney(endVal)}</td><td>${diff >= 0 ? '+' : ''}${fmtMoney(diff)}</td><td>${pctChangeLabel(startVal, endVal)}</td></tr>`;
-    })
-    .join('');
+
+  const headCells = perCapita ? ['类目', '统计量', '起始月', '结束月', '差值', '涨跌幅'] : ['类目', '起始月金额 (₦)', '结束月金额 (₦)', '差值 (₦)', '涨跌幅'];
+  document.getElementById('catCompareTwoPointHead').innerHTML = `<tr>${headCells.map((h) => `<th>${h}</th>`).join('')}</tr>`;
+
+  const bodyRows = [];
+  categoryMeta.forEach((c) => {
+    if (!startRow || !endRow) {
+      bodyRows.push(`<tr><td>${c.label}</td><td colspan="${perCapita ? 5 : 4}" class="muted">起始月或结束月在所选范围内没有数据</td></tr>`);
+      return;
+    }
+    if (perCapita) {
+      const meanStart = statValue(startRow, c.value, 'per_capita');
+      const meanEnd = statValue(endRow, c.value, 'per_capita');
+      const medStart = statValue(startRow, c.value, 'median');
+      const medEnd = statValue(endRow, c.value, 'median');
+      bodyRows.push(
+        `<tr><td rowspan="2">${c.label}</td><td>人均（均值）</td><td>${fmtMoney(meanStart)}</td><td>${fmtMoney(meanEnd)}</td><td>${fmtSignedMoney(meanEnd - meanStart)}</td><td>${pctChangeLabel(meanStart, meanEnd)}</td></tr>`
+      );
+      bodyRows.push(`<tr><td>中位数</td><td>${fmtMoney(medStart)}</td><td>${fmtMoney(medEnd)}</td><td>${fmtSignedMoney(medEnd - medStart)}</td><td>${pctChangeLabel(medStart, medEnd)}</td></tr>`);
+    } else {
+      const startVal = statValue(startRow, c.value, 'categories');
+      const endVal = statValue(endRow, c.value, 'categories');
+      bodyRows.push(`<tr><td>${c.label}</td><td>${fmtMoney(startVal)}</td><td>${fmtMoney(endVal)}</td><td>${fmtSignedMoney(endVal - startVal)}</td><td>${pctChangeLabel(startVal, endVal)}</td></tr>`);
+    }
+  });
+  document.querySelector('#catCompareTwoPointTable tbody').innerHTML = bodyRows.join('');
+}
+
+// PRD V1.9 §3.3: 用工类型对比 + 两点比较模式展示"全部/正式工/合同工"三级
+// 树形结构，人均模式下均值和中位数两组数字并列展示（不能只做其中一个）。
+function renderCatCompareTree(cache, categoryMeta, startMonth, endMonth) {
+  document.getElementById('catCompareTwoPointHead').innerHTML = '';
+  document.querySelector('#catCompareTwoPointTable tbody').innerHTML = '';
+  const { perCapita, data } = cache;
+
+  const pointsFor = (rows, catKey, statKey) => {
+    if (!rows) return null;
+    const startRow = rows.find((r) => r.month === startMonth);
+    const endRow = rows.find((r) => r.month === endMonth);
+    if (!startRow || !endRow) return null;
+    return { start: statValue(startRow, catKey, statKey), end: statValue(endRow, catKey, statKey) };
+  };
+
+  const lineFor = (label, points) => {
+    if (!points) return `${label}：起始月或结束月在所选范围内没有数据（如果刚切换了筛选条件，请重新点击"查询"）`;
+    const diff = points.end - points.start;
+    return `${label}：${fmtMoney(points.start)} → ${fmtMoney(points.end)}（${fmtSignedMoney(diff)}，${pctChangeLabel(points.start, points.end)}）`;
+  };
+
+  const buildBlock = (statKey) =>
+    categoryMeta
+      .map((c) => {
+        const all = pointsFor(data.all, c.value, statKey);
+        const formal = pointsFor(data.Formal, c.value, statKey);
+        const contract = pointsFor(data.Contract, c.value, statKey);
+        return `
+        <div style="margin-bottom:10px;">
+          <strong>${c.label}：</strong>
+          <div>${lineFor('全部', all)}</div>
+          <div style="padding-left:16px;">├─ ${lineFor('正式工', formal)}</div>
+          <div style="padding-left:16px;">└─ ${lineFor('合同工', contract)}</div>
+        </div>`;
+      })
+      .join('');
+
+  document.getElementById('catCompareTreeView').innerHTML = perCapita
+    ? `<h4>人均（均值）</h4>${buildBlock('per_capita')}<h4 style="margin-top:16px;">人均（中位数）</h4>${buildBlock('median')}`
+    : buildBlock('categories');
 }
 
 function initCategoryTab() {
   document.querySelectorAll('input[name="catTrendMode"]').forEach((r) => r.addEventListener('change', updateCatTrendModeVisibility));
   document.querySelectorAll('input[name="catTrendView"]').forEach((r) =>
     r.addEventListener('change', () => {
-      if (catTrendCache.length) renderCatTrendChartAndTable(catTrendCache, catTrendCacheMeta);
+      if (catTrendCache) renderCatTrendChartAndTable(catTrendCache, catTrendCacheMeta);
     })
   );
   updateCatTrendModeVisibility();
@@ -540,27 +702,50 @@ function initCategoryTab() {
     }
     const start = document.getElementById('catTrendStart').value;
     const end = document.getElementById('catTrendEnd').value;
-    if (currentCatTrendMode() === 'compare' && (!start || !end || start >= end)) {
+    const pageMode = currentCatTrendMode();
+    if (pageMode === 'compare' && (!start || !end || start >= end)) {
       errEl.textContent = '两点比较模式下，起始月份必须早于结束月份';
       return;
     }
 
+    const employmentTypeMode = currentCatEmploymentTypeMode();
+    const perCapita = currentCatStatBasis() === 'per_capita';
+    const baseParams = {
+      categories,
+      department: document.getElementById('catTrendDept').value || null,
+      entity: document.getElementById('catTrendEntity').value || null,
+      start_month: start || null,
+      end_month: end || null,
+      per_capita: perCapita,
+    };
+
     try {
-      const rows = await apiPost('/api/category-trend', {
-        categories,
-        department: document.getElementById('catTrendDept').value || null,
-        entity: document.getElementById('catTrendEntity').value || null,
-        start_month: start || null,
-        end_month: end || null,
-      });
+      const data = {};
+      if (employmentTypeMode === 'compare') {
+        // PRD V1.9 §3.3: two-point mode's tree view also needs the "全部"
+        // (combined) numbers alongside Formal/Contract; trend mode's chart
+        // only ever plots the Formal/Contract lines, so skip that extra call there.
+        const calls = {
+          Formal: apiPost('/api/category-trend', { ...baseParams, employment_type: 'Formal' }),
+          Contract: apiPost('/api/category-trend', { ...baseParams, employment_type: 'Contract' }),
+        };
+        if (pageMode === 'compare') calls.all = apiPost('/api/category-trend', { ...baseParams, employment_type: null });
+        data.Formal = await calls.Formal;
+        data.Contract = await calls.Contract;
+        if (calls.all) data.all = await calls.all;
+      } else {
+        const employment_type = employmentTypeMode === 'all' ? null : employmentTypeMode;
+        data.all = await apiPost('/api/category-trend', { ...baseParams, employment_type });
+      }
+
       const categoryMeta = categories.map((v) => metaCategories.find((c) => c.value === v)).filter(Boolean);
-      catTrendCache = rows;
+      catTrendCache = { employmentTypeMode, perCapita, data };
       catTrendCacheMeta = categoryMeta;
 
-      if (currentCatTrendMode() === 'trend') {
-        renderCatTrendChartAndTable(rows, categoryMeta);
+      if (pageMode === 'trend') {
+        renderCatTrendChartAndTable(catTrendCache, categoryMeta);
       } else {
-        renderCatCompareTable(rows, categoryMeta, start, end);
+        renderCatCompareTable(catTrendCache, categoryMeta, start, end);
       }
     } catch (e) {
       errEl.textContent = e.message;

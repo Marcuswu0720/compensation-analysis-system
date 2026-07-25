@@ -120,3 +120,52 @@ def test_get_categories_trend_rejects_unknown_category(db_session):
         assert False, "expected ValueError"
     except ValueError as e:
         assert "not_a_real_category" in str(e)
+
+
+def test_get_categories_trend_rejects_unknown_category_in_per_capita_mode_too(db_session):
+    try:
+        get_categories_trend(db_session, ["not_a_real_category"], per_capita=True)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "not_a_real_category" in str(e)
+
+
+def test_get_categories_trend_per_capita_and_median(db_session):
+    """PRD V1.9 §2: 人均 = 类目总额 / 当月在职总人数，且必须同时给出中位数
+    （不能只算均值）——basic salaries are [100000, 50000, 80000], mean=230000/3,
+    median=80000 (the middle value once sorted: 50000, 80000, 100000)."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+
+    trend = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"], per_capita=True)
+    row = trend[0]
+    assert row["headcount"] == 3
+    assert row["categories"]["basic_salary_actual"] == 230000
+    assert abs(row["per_capita"]["basic_salary_actual"] - 230000 / 3) < 1e-6
+    assert row["median"]["basic_salary_actual"] == 80000
+
+
+def test_get_categories_trend_employment_type_filter_uses_its_own_denominator(db_session):
+    """PRD V1.9 §2.1: 拆用工类型时，分母各自独立计算，不共用总分母- Formal
+    headcount here is 2 (Alice+Carol), not the combined 3."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+
+    formal = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"], employment_type="Formal")
+    assert formal[0]["headcount"] == 2
+    assert formal[0]["categories"]["basic_salary_actual"] == 100000 + 80000
+
+    contract = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"], employment_type="Contract")
+    assert contract[0]["headcount"] == 1
+    assert contract[0]["categories"]["basic_salary_actual"] == 50000
+
+
+def test_get_categories_trend_employment_type_filter_combines_with_per_capita(db_session):
+    """Formal-only per-capita: basic salaries [100000, 80000], mean=90000,
+    median=90000 (mean of two middle values happens to equal 90000 here too,
+    but computed independently to make sure both are actually right)."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+
+    formal = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"], employment_type="Formal", per_capita=True)
+    row = formal[0]
+    assert row["headcount"] == 2
+    assert row["per_capita"]["basic_salary_actual"] == 90000
+    assert row["median"]["basic_salary_actual"] == 90000

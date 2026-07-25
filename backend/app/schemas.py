@@ -40,6 +40,8 @@ class CategoryTrendRequest(BaseModel):
     entity: str | None = None
     start_month: str | None = None
     end_month: str | None = None
+    employment_type: str | None = None  # None (全部) | "Formal" | "Contract" - PRD V1.9
+    per_capita: bool = False  # PRD V1.9 §2: also returns per_capita + median alongside categories
 
 
 class CategoryCompareRequest(BaseModel):

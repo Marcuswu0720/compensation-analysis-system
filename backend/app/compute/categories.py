@@ -1,11 +1,14 @@
 """Salary-category breakdown queries (PRD V1.1 §2.3, multi-category trend
-added by PRD V1.7 §3.1): trend for one or more categories at once,
-cross-department comparison for a category in one month, and the full
-cost-composition percentage split for a scope/month. All deterministic SQL
-aggregation over the component fields ingestion/salary_components.py
-extracts - no supplemental (bonus/backpay) folding here, since those only
-ever populate hr_cost via compute/trends.py, not the per-component fields.
+added by PRD V1.7 §3.1, per-capita/median/employment-type split added by
+PRD V1.9 §1-3): trend for one or more categories at once, cross-department
+comparison for a category in one month, and the full cost-composition
+percentage split for a scope/month. All deterministic SQL aggregation over
+the component fields ingestion/salary_components.py extracts - no
+supplemental (bonus/backpay) folding here, since those only ever populate
+hr_cost via compute/trends.py, not the per-component fields.
 """
+
+import statistics
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -47,6 +50,18 @@ def _column(category: str):
     return getattr(MonthlyEmployeeSnapshot, category)
 
 
+def _base_query(db: Session, department: ScopeValue, entity: ScopeValue, scope_rules, months, employment_type):
+    q = db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
+    if months:
+        q = q.filter(MonthlyEmployeeSnapshot.month.in_(months))
+    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
+    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
+    q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
+    if employment_type:
+        q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
+    return q
+
+
 def get_categories_trend(
     db: Session,
     categories: list[str],
@@ -54,14 +69,36 @@ def get_categories_trend(
     department: ScopeValue = None,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
+    employment_type: str | None = None,
+    per_capita: bool = False,
 ) -> list[dict]:
-    """PRD V1.7 §3.1: 薪资类目页面从单选改为多选 - one grouped query returns
-    every requested category's monthly total side by side (same headcount
+    """PRD V1.7 §3.1: 薪资类目页面从单选改为多选 - one query returns every
+    requested category's monthly total side by side (same headcount
     denominator for all of them), instead of one round trip per category
     that could return a different set of months per category and force the
     caller to reconcile them. Also backs the page's "两点比较" mode: the
     caller just picks out the two rows matching start/end month from the
-    same response instead of a second endpoint."""
+    same response instead of a second endpoint.
+
+    PRD V1.9 extends this SAME function (not a parallel implementation) with
+    two independent optional parameters instead of adding a new endpoint per
+    page, so any other page that later needs a per-capita or employment-type
+    view can reuse it directly:
+      - `employment_type` ('Formal' | 'Contract' | None for both combined):
+        a plain filter - "对比 Formal vs Contract" is just calling this
+        function twice with each value and combining client-side, not a
+        third mode this function needs to know about.
+      - `per_capita`: also computes each category's per-head average AND
+        median for that month/scope (PRD §2.2: median must always be shown
+        alongside the mean, not hidden behind an extra click - a median
+        needs the individual per-employee values, not just a SQL SUM, so
+        this path queries raw rows instead of a grouped aggregate; when
+        `per_capita` is False the lighter grouped-SUM query below is used
+        instead, unchanged from V1.7).
+    """
+    if per_capita:
+        return _get_categories_trend_per_capita(db, categories, months, department, entity, scope_rules, employment_type)
+
     cols = [_column(c) for c in categories]
     q = db.query(
         MonthlyEmployeeSnapshot.month,
@@ -73,6 +110,8 @@ def get_categories_trend(
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
+    if employment_type:
+        q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
     results = []
@@ -85,6 +124,36 @@ def get_categories_trend(
                 "categories": {cat: (total or 0.0) for cat, total in zip(categories, totals)},
             }
         )
+    return results
+
+
+def _get_categories_trend_per_capita(db, categories, months, department, entity, scope_rules, employment_type) -> list[dict]:
+    """PRD V1.9 §2.1: 人均 = 类目总额 ÷ 该范围内当月在职总人数（跟 get_trend
+    的"在职人数（含当月内离职）"口径一致），拆用工类型时分母各自独立计算，
+    不共用总分母 - which falls out naturally here since `employment_type`
+    filters the underlying row set BEFORE headcount is computed as len(rows)."""
+    cols = [_column(c) for c in categories]
+    q = _base_query(db, department, entity, scope_rules, months, employment_type).with_entities(MonthlyEmployeeSnapshot.month, *cols)
+    rows = q.order_by(MonthlyEmployeeSnapshot.month).all()
+
+    by_month: dict[str, list] = {}
+    for row in rows:
+        by_month.setdefault(row[0], []).append(row[1:])
+
+    results = []
+    for month in sorted(by_month):
+        employee_rows = by_month[month]
+        headcount = len(employee_rows)
+        totals: dict[str, float] = {}
+        per_capita_vals: dict[str, float] = {}
+        median_vals: dict[str, float] = {}
+        for i, cat in enumerate(categories):
+            values = [(r[i] or 0.0) for r in employee_rows]
+            total = sum(values)
+            totals[cat] = total
+            per_capita_vals[cat] = (total / headcount) if headcount else 0.0
+            median_vals[cat] = statistics.median(values) if values else 0.0
+        results.append({"month": month, "headcount": headcount, "categories": totals, "per_capita": per_capita_vals, "median": median_vals})
     return results
 
 
