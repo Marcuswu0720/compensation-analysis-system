@@ -94,20 +94,32 @@ FORMAL_FIELDS: list[FieldSpec] = [
 
 CONTRACT_FIELDS: list[FieldSpec] = [
     FieldSpec("entity", "Entity", "公司实体", ("Entity",), True),
-    FieldSpec("staff_id", "Staff ID", "工号", ("Staff ID",), True),
+    # Contract-Flexi's real sheet uses a bare "ID" column, not "Staff ID" -
+    # the actual staff_id VALUE was always correct regardless (it comes from
+    # the ingestion/constants.py alias list, not this diagnostic-only spec),
+    # but without this alias the upload-time field-mapping check wrongly
+    # reported "Staff ID" as missing for every Contract-Flexi sheet.
+    FieldSpec("staff_id", "Staff ID", "工号", ("Staff ID", "ID"), True),
     FieldSpec("employment_type", "Employment Type", "员工类别", ("Employment Type",), True),
     FieldSpec("staff_name", "Staff Name", "姓名", ("Name",), True),
     FieldSpec("department1", "Department 1", "一级部门", ("Department 1",), True),
     FieldSpec("department2", "Department 2", "二级部门", ("Department 2",), True),
     FieldSpec("department3", "Department 3", "三级部门", ("Department 3",), True),
-    FieldSpec("position", "Position", "岗位", ("Job Title",), True),
-    FieldSpec("reporting_line", "Reporting Line", "汇报对象", ("Reporting Line",), True),
+    # Contract-PP calls this column "Job Title"; Contract-Flexi calls the
+    # same column "Position" - verified against a real January file where
+    # relying on "Job Title" alone left every Flexi row's position blank.
+    FieldSpec("position", "Position", "岗位", ("Job Title", "Position"), True),
+    # Same story for reporting line: Contract-Flexi's real header is
+    # "Chinese Reporting line", not "Reporting Line".
+    FieldSpec("reporting_line", "Reporting Line", "汇报对象", ("Reporting Line", "Chinese Reporting line"), True),
     FieldSpec("job_grade", "Job Grade", "职级", ("Job Grade",), True),
     FieldSpec("state", "State", "工作地点-州", ("State",), True),
-    FieldSpec("work_station", "Work Station", "工作地点-办公室", ("Work Station",), True),
+    # Contract-Flexi's real header is "Work Location", not "Work Station".
+    FieldSpec("work_station", "Work Station", "工作地点-办公室", ("Work Station", "Work Location"), True),
     FieldSpec("joining_date", "Joining Date", "入职时间", ("Joining Date",), True),
     FieldSpec("resign_date", "Resign Date", "离职时间", ("Exit Date",), True),
-    FieldSpec("should_work_days", "Should Work Days", "应出勤日", ("Working Days",), True),
+    # Contract-Flexi's real header is "Should Working Days", not "Working Days".
+    FieldSpec("should_work_days", "Should Work Days", "应出勤日", ("Working Days", "Should Working Days"), True),
     # NOTE: salary_components.py's ANALYSIS-layer `basic_salary_actual` reads
     # "Actual Monthly Basic Salary" (verified against real data in an earlier
     # session) and is NOT changed here - this FieldSpec only feeds this
@@ -119,7 +131,15 @@ CONTRACT_FIELDS: list[FieldSpec] = [
     # validated analysis-layer number (see ANALYSIS_KEYS below), never a
     # fresh extraction from this alias.
     FieldSpec("basic_salary_actual", "Basic Salary", "底薪标准", ("Monthly Basic Salary",), True),
-    FieldSpec("airtime_data_allowance", "Airtime/Data Allowance", "话补", ("Airtime / Data Allowance",), True),
+    # Contract-Flexi's real header has extra trailing wording ("... / POS
+    # Storage Subcidy") that isn't just casing/whitespace drift.
+    FieldSpec(
+        "airtime_data_allowance",
+        "Airtime/Data Allowance",
+        "话补",
+        ("Airtime / Data Allowance", "Airtime / Data Allowance / POS Storage Subcidy"),
+        True,
+    ),
     FieldSpec("transport_allowance", "Transport Allowance", "交通补贴", ("Transport Allowance",), True),
     FieldSpec("performance_std", "Performance Standard", "绩效标准", ("Performance Standard",), True),
     FieldSpec("attendance_days", "Attendance Days", "实际出勤日", ("Attendance Days",), True),
@@ -148,15 +168,20 @@ BONUS_FIELDS: list[FieldSpec] = [
     # a genuinely different wording) - kept as a second alias even though
     # the mapping file's own row says "Staff ID".
     FieldSpec("staff_id", "Staff ID", "工号", ("Staff ID", "Staff ID No"), True),
-    FieldSpec("employment_type", "Employment Type", "员工类别", ("Employment Type",), True),
+    # A real January bonus file uses "Staff Type" for this column, not
+    # "Employment Type" - genuinely different wording, not casing drift.
+    FieldSpec("employment_type", "Employment Type", "员工类别", ("Employment Type", "Staff Type"), True),
     # Same story: PRD V1.8 §1.1 documents "Staff name" as an observed
     # variant alongside the mapping file's stated "Name".
     FieldSpec("staff_name", "Staff Name", "姓名", ("Name", "Staff Name"), True),
     FieldSpec("department1", "Department 1", "一级部门", ("Department 1",), True),
     FieldSpec("department2", "Department 2", "二级部门", ("Department 2",), True),
     FieldSpec("department3", "Department 3", "三级部门", ("Department 3",), True),
-    FieldSpec("position", "Position", "岗位", ("Job Title",), True),
-    FieldSpec("reporting_line", "Reporting Line", "汇报对象", ("Reporting Line",), True),
+    # The bonus template's real header is "Position", not "Job Title" (unlike
+    # Contract, which really does use "Job Title").
+    FieldSpec("position", "Position", "岗位", ("Job Title", "Position"), True),
+    # The bonus template's real header is "Line Manager", not "Reporting Line".
+    FieldSpec("reporting_line", "Reporting Line", "汇报对象", ("Reporting Line", "Line Manager"), True),
     FieldSpec("job_grade", "Job Grade", "职级", ("Job Grade",), True),
     # V1.8 correction: the bonus template merges State+Work Station into one
     # Location field - unlike Formal/Contract, which keep the two separate.

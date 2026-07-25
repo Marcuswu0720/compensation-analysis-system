@@ -17,6 +17,7 @@ import json
 
 from sqlalchemy.orm import Session
 
+from ..ingestion.date_utils import format_date_for_display
 from ..ingestion.full_fields import BONUS_FIELDS, CONTRACT_FIELDS, FORMAL_FIELDS, export_header
 from ..models import MonthlyEmployeeSnapshot, SupplementalPaySnapshot
 from .scope import ScopeRule, apply_permission_scope, apply_scope_filter
@@ -125,8 +126,8 @@ def _base_row_to_dict(r: MonthlyEmployeeSnapshot) -> dict:
         "job_grade": r.job_grade,
         "state": r.state,
         "work_station": r.work_station,
-        "joining_date": r.joining_date,
-        "resign_date": r.resign_or_exit_date,
+        "joining_date": format_date_for_display(r.joining_date),
+        "resign_date": format_date_for_display(r.resign_or_exit_date),
         "basic_salary_actual": r.basic_salary_actual,
         "performance_std": r.performance_std,
         "performance_coefficient": r.performance_coefficient,
@@ -205,8 +206,8 @@ def get_bonus_detail_rows(
                 "reporting_line": r.reporting_line,
                 "job_grade": r.job_grade,
                 "location": r.location,
-                "joining_date": r.joining_date,
-                "resign_date": r.resign_date,
+                "joining_date": format_date_for_display(r.joining_date),
+                "resign_date": format_date_for_display(r.resign_date),
                 "hr_cost": r.amount,
                 **detail,
             }

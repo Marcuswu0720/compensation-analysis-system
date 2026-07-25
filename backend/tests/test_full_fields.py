@@ -19,6 +19,7 @@ from app.ingestion.full_fields import (
     BONUS_EXCLUDE_KEYS,
     BONUS_FIELDS,
     BONUS_TOP_LEVEL_KEYS,
+    CONTRACT_FIELDS,
     NEW_DESCRIPTIVE_KEYS,
     TOP_LEVEL_DESCRIPTIVE_KEYS,
     FieldSpec,
@@ -141,6 +142,54 @@ def test_check_field_mapping_ignores_exclude_keys_unlike_extract_full_detail():
     index = build_header_index(["Entity"])
     total, matched, missing = check_field_mapping(index, specs)
     assert (total, matched, missing) == (1, 1, [])
+
+
+def test_contract_fields_matches_flexi_alternate_headers():
+    """Regression test found against a real January file: Contract-Flexi
+    uses different header wording than Contract-PP for several columns
+    (Position vs Job Title, Chinese Reporting line vs Reporting Line, Work
+    Location vs Work Station, Should Working Days vs Working Days, and a
+    longer Airtime/Data Allowance name) - relying on a single alias per
+    field left every one of these blank for Flexi rows even though the
+    column genuinely existed."""
+    flexi_headers = [
+        "Staff ID", "Entity", "Employment Type", "Name", "Department 1", "Department 2", "Department 3",
+        "Position", "Chinese Reporting line", "Job Grade", "State", "Work Location", "Joining Date", "Exit Date",
+        "Should Working Days", "Basic Salary", "Airtime / Data Allowance / POS Storage Subcidy",
+        "Transport Allowance", "Performance Standard", "Attendance Days", "Attendance rate", "KPI Coeff.",
+        "Perfomance bonus", "Hourly Late", "Lateness deduction", "Commission/Bonus", "Overtime Hour",
+        "Overtime income", "Arrears/Other Income", "Actual Gross Total Amount", "ER COST", "Net Amount Due", "HR Cost",
+    ]
+    index = build_header_index(flexi_headers)
+    total, matched, missing = check_field_mapping(index, CONTRACT_FIELDS)
+    # basic_salary_actual is a deliberate, documented diagnostic-only
+    # mismatch (see the FieldSpec's own comment) - everything else must match.
+    missing_keys = {m["key"] for m in missing}
+    assert missing_keys == {"basic_salary_actual"}
+    assert matched == total - 1
+
+    row = {h: f"value-of-{h}" for h in flexi_headers}
+    top_level, detail_json, _ = extract_full_detail(
+        row, CONTRACT_FIELDS, top_level_keys=NEW_DESCRIPTIVE_KEYS, exclude_keys=ANALYSIS_KEYS | TOP_LEVEL_DESCRIPTIVE_KEYS, header_index=index
+    )
+    assert top_level["position"] == "value-of-Position"
+    assert top_level["reporting_line"] == "value-of-Chinese Reporting line"
+    assert top_level["work_station"] == "value-of-Work Location"
+    assert detail_json["should_work_days"] == "value-of-Should Working Days"
+    assert detail_json["airtime_data_allowance"] == "value-of-Airtime / Data Allowance / POS Storage Subcidy"
+
+
+def test_bonus_fields_matches_real_alternate_headers():
+    """Regression test found against a real January bonus file: its actual
+    headers are Staff Type / Position / Line Manager, not the mapping
+    file's Employment Type / Job Title / Reporting Line - the mapping
+    file's wording is kept as the primary alias (it's still correct for
+    other months/entities), these are added as a second, genuinely
+    different-wording alias per PRD V1.8 §1's rule."""
+    index = build_header_index(["Staff Type", "Position", "Line Manager"])
+    assert find_alias(index, next(s for s in BONUS_FIELDS if s.key == "employment_type").source_aliases) == "Staff Type"
+    assert find_alias(index, next(s for s in BONUS_FIELDS if s.key == "position").source_aliases) == "Position"
+    assert find_alias(index, next(s for s in BONUS_FIELDS if s.key == "reporting_line").source_aliases) == "Line Manager"
 
 
 # ---------- loader.py: base batch field-mapping diagnostic + date fix ----------

@@ -459,8 +459,16 @@ function currentCatStatBasis() {
   return document.querySelector('input[name="catStatBasis"]:checked').value; // 'total' | 'per_capita'
 }
 
+function currentCatShowMedian() {
+  return currentCatStatBasis() === 'per_capita' && document.getElementById('catShowMedian').checked;
+}
+
 function currentCatEmploymentTypeMode() {
   return document.getElementById('catTrendEmploymentType').value; // 'all' | 'Formal' | 'Contract' | 'compare'
+}
+
+function updateCatStatBasisVisibility() {
+  document.getElementById('catShowMedianWrap').style.display = currentCatStatBasis() === 'per_capita' ? 'inline-flex' : 'none';
 }
 
 function updateCatTrendModeVisibility() {
@@ -507,6 +515,7 @@ function pctChangeLabel(baseline, current) {
 
 function renderCatTrendChartAndTable(cache, categoryMeta) {
   const { perCapita } = cache;
+  const showMedian = perCapita && currentCatShowMedian();
   const view = currentCatTrendView();
   const series = catSeriesList(cache);
   const months = Array.from(new Set(series.flatMap((s) => s.rows.map((r) => r.month)))).sort();
@@ -533,11 +542,11 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
         spanGaps: true,
       });
     });
-    // PRD V1.9 §2.2: median must be shown alongside the mean, not hidden -
+    // Median line is opt-in (a checkbox next to 统计口径, off by default) -
     // charted as a same-color dashed line when there's only one series so
     // it doesn't collide with the solid/dashed = Formal/Contract distinction
-    // compare mode already uses (median stays visible in the table either way).
-    if (perCapita && series.length === 1) {
+    // compare mode already uses.
+    if (showMedian && series.length === 1) {
       const byMonth = rowsByMonthPerSeries[0];
       const raw = months.map((m) => (byMonth[m] ? statValue(byMonth[m], c.value, 'median') : null));
       const baseline = raw.find((v) => v !== null) ?? 0;
@@ -567,7 +576,7 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
     series.forEach((s) => {
       if (perCapita) {
         headCells.push(`${c.label}${s.label} 人均`);
-        headCells.push(`${c.label}${s.label} 中位数`);
+        if (showMedian) headCells.push(`${c.label}${s.label} 中位数`);
       } else {
         headCells.push(`${c.label}${s.label}`);
       }
@@ -586,12 +595,12 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
         series.forEach((s, si) => {
           const row = rowsByMonthPerSeries[si][m];
           if (!row) {
-            cells.push(perCapita ? '<td>-</td><td>-</td>' : '<td>-</td>');
+            cells.push(perCapita && showMedian ? '<td>-</td><td>-</td>' : '<td>-</td>');
             return;
           }
           if (perCapita) {
             cells.push(`<td>${fmtMoney(statValue(row, c.value, 'per_capita'))}</td>`);
-            cells.push(`<td>${fmtMoney(statValue(row, c.value, 'median'))}</td>`);
+            if (showMedian) cells.push(`<td>${fmtMoney(statValue(row, c.value, 'median'))}</td>`);
           } else {
             cells.push(`<td>${fmtMoney(statValue(row, c.value, 'categories'))}</td>`);
           }
@@ -604,6 +613,7 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
 
 function renderCatCompareTable(cache, categoryMeta, startMonth, endMonth) {
   const { perCapita, employmentTypeMode, data } = cache;
+  const showMedian = perCapita && currentCatShowMedian();
   if (employmentTypeMode === 'compare') {
     renderCatCompareTree(cache, categoryMeta, startMonth, endMonth);
     return;
@@ -614,18 +624,28 @@ function renderCatCompareTable(cache, categoryMeta, startMonth, endMonth) {
   const startRow = rows.find((r) => r.month === startMonth);
   const endRow = rows.find((r) => r.month === endMonth);
 
-  const headCells = perCapita ? ['类目', '统计量', '起始月', '结束月', '差值', '涨跌幅'] : ['类目', '起始月金额 (₦)', '结束月金额 (₦)', '差值 (₦)', '涨跌幅'];
+  const headCells = perCapita
+    ? showMedian
+      ? ['类目', '统计量', '起始月', '结束月', '差值', '涨跌幅']
+      : ['类目', '人均起始月 (₦)', '人均结束月 (₦)', '差值 (₦)', '涨跌幅']
+    : ['类目', '起始月金额 (₦)', '结束月金额 (₦)', '差值 (₦)', '涨跌幅'];
   document.getElementById('catCompareTwoPointHead').innerHTML = `<tr>${headCells.map((h) => `<th>${h}</th>`).join('')}</tr>`;
 
   const bodyRows = [];
   categoryMeta.forEach((c) => {
     if (!startRow || !endRow) {
-      bodyRows.push(`<tr><td>${c.label}</td><td colspan="${perCapita ? 5 : 4}" class="muted">起始月或结束月在所选范围内没有数据</td></tr>`);
+      bodyRows.push(`<tr><td>${c.label}</td><td colspan="${headCells.length - 1}" class="muted">起始月或结束月在所选范围内没有数据</td></tr>`);
       return;
     }
     if (perCapita) {
       const meanStart = statValue(startRow, c.value, 'per_capita');
       const meanEnd = statValue(endRow, c.value, 'per_capita');
+      if (!showMedian) {
+        bodyRows.push(
+          `<tr><td>${c.label}</td><td>${fmtMoney(meanStart)}</td><td>${fmtMoney(meanEnd)}</td><td>${fmtSignedMoney(meanEnd - meanStart)}</td><td>${pctChangeLabel(meanStart, meanEnd)}</td></tr>`
+        );
+        return;
+      }
       const medStart = statValue(startRow, c.value, 'median');
       const medEnd = statValue(endRow, c.value, 'median');
       bodyRows.push(
@@ -642,11 +662,13 @@ function renderCatCompareTable(cache, categoryMeta, startMonth, endMonth) {
 }
 
 // PRD V1.9 §3.3: 用工类型对比 + 两点比较模式展示"全部/正式工/合同工"三级
-// 树形结构，人均模式下均值和中位数两组数字并列展示（不能只做其中一个）。
+// 树形结构；人均模式下默认只展示均值，勾选"同时显示中位数"后才追加中位数
+// 区块（用户明确要求默认不展示中位数，只作为一个可选开关）。
 function renderCatCompareTree(cache, categoryMeta, startMonth, endMonth) {
   document.getElementById('catCompareTwoPointHead').innerHTML = '';
   document.querySelector('#catCompareTwoPointTable tbody').innerHTML = '';
   const { perCapita, data } = cache;
+  const showMedian = perCapita && currentCatShowMedian();
 
   const pointsFor = (rows, catKey, statKey) => {
     if (!rows) return null;
@@ -679,18 +701,31 @@ function renderCatCompareTree(cache, categoryMeta, startMonth, endMonth) {
       .join('');
 
   document.getElementById('catCompareTreeView').innerHTML = perCapita
-    ? `<h4>人均（均值）</h4>${buildBlock('per_capita')}<h4 style="margin-top:16px;">人均（中位数）</h4>${buildBlock('median')}`
+    ? showMedian
+      ? `<h4>人均（均值）</h4>${buildBlock('per_capita')}<h4 style="margin-top:16px;">人均（中位数）</h4>${buildBlock('median')}`
+      : `<h4>人均（均值）</h4>${buildBlock('per_capita')}`
     : buildBlock('categories');
+}
+
+function rerenderCatTrendResult() {
+  if (!catTrendCache) return;
+  if (currentCatTrendMode() === 'trend') {
+    renderCatTrendChartAndTable(catTrendCache, catTrendCacheMeta);
+  } else {
+    renderCatCompareTable(catTrendCache, catTrendCacheMeta, document.getElementById('catTrendStart').value, document.getElementById('catTrendEnd').value);
+  }
 }
 
 function initCategoryTab() {
   document.querySelectorAll('input[name="catTrendMode"]').forEach((r) => r.addEventListener('change', updateCatTrendModeVisibility));
-  document.querySelectorAll('input[name="catTrendView"]').forEach((r) =>
-    r.addEventListener('change', () => {
-      if (catTrendCache) renderCatTrendChartAndTable(catTrendCache, catTrendCacheMeta);
-    })
-  );
+  document.querySelectorAll('input[name="catTrendView"]').forEach((r) => r.addEventListener('change', rerenderCatTrendResult));
+  // Switching 统计口径 (total vs per_capita) needs a fresh /api/category-trend
+  // call - unlike view/median, which just re-render already-fetched data -
+  // so this only toggles the checkbox's visibility, not a re-render.
+  document.querySelectorAll('input[name="catStatBasis"]').forEach((r) => r.addEventListener('change', updateCatStatBasisVisibility));
+  document.getElementById('catShowMedian').addEventListener('change', rerenderCatTrendResult);
   updateCatTrendModeVisibility();
+  updateCatStatBasisVisibility();
 
   document.getElementById('catTrendQueryBtn').addEventListener('click', async () => {
     const errEl = document.getElementById('catTrendError');

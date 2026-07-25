@@ -16,7 +16,7 @@ from app.compute.export import (
 from app.compute.scope import ScopeRule
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
-from app.models import DownloadLog, User, ViewerPermission
+from app.models import DownloadLog, MonthlyEmployeeSnapshot, User, ViewerPermission
 from app.routers.export import _build_workbook, export_detail
 from app.schemas import ExportDetailRequest
 
@@ -109,6 +109,25 @@ def test_base_rows_carry_resign_date_field(db_session):
     assert carol["resign_date"] == "2026-01-20"
     alice = next(r for r in rows if r["staff_id"] == "E001")
     assert alice["resign_date"] is None
+
+
+def test_base_rows_strip_stale_time_suffix_from_pre_fix_dates(db_session):
+    """Regression test: a row confirmed before the V1.8 date-formatting fix
+    existed has a plain "YYYY-MM-DD HH:MM:SS" string already baked into the
+    database (from the old str(datetime) call), which a fresh datetime-only
+    formatter can no longer recognize. The export layer must reformat it
+    defensively at read time so an old row displays correctly without
+    requiring the admin to re-upload that month's data."""
+    _confirm(db_session, "2026-01", build_month1_workbook)
+    row = db_session.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.staff_id == "E003").one()
+    row.joining_date = "2020-01-15 00:00:00"
+    row.resign_or_exit_date = "2026-01-20 00:00:00"
+    db_session.commit()
+
+    rows = get_base_full_detail_rows(db_session, months=["2026-01"], scope_rules=None)
+    carol = next(r for r in rows if r["staff_id"] == "E003")
+    assert carol["joining_date"] == "2020-01-15"
+    assert carol["resign_date"] == "2026-01-20"
 
 
 def test_export_endpoint_rejects_viewer_with_no_grants(db_session):
