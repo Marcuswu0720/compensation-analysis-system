@@ -163,8 +163,10 @@ def test_contract_fields_matches_flexi_alternate_headers():
     ]
     index = build_header_index(flexi_headers)
     total, matched, missing = check_field_mapping(index, CONTRACT_FIELDS)
-    # basic_salary_actual is a deliberate, documented diagnostic-only
-    # mismatch (see the FieldSpec's own comment) - everything else must match.
+    # basic_salary_actual is missing here simply because this fixture's
+    # header list doesn't include "Actual Monthly Basic Salary" - not a
+    # mismatch, see test_contract_basic_salary_diagnostic_matches_real_column
+    # below for the case where that column is present.
     missing_keys = {m["key"] for m in missing}
     assert missing_keys == {"basic_salary_actual"}
     assert matched == total - 1
@@ -178,6 +180,24 @@ def test_contract_fields_matches_flexi_alternate_headers():
     assert top_level["work_station"] == "value-of-Work Location"
     assert detail_json["should_work_days"] == "value-of-Should Working Days"
     assert detail_json["airtime_data_allowance"] == "value-of-Airtime / Data Allowance / POS Storage Subcidy"
+
+
+def test_contract_basic_salary_diagnostic_matches_real_column():
+    """Regression test found against a real production upload: the
+    field-mapping diagnostic reported "Basic Salary" as missing on every
+    Contract-PP/Contract-Flexi upload even though the exported value was
+    always correct - the diagnostic's alias ("Monthly Basic Salary") didn't
+    match any real column, while the actual analysis-layer number (see
+    salary_components.py) is read from "Actual Monthly Basic Salary", which
+    the real file does have. Checking for the same column the analysis layer
+    actually reads makes the diagnostic agree with reality instead of
+    falsely reporting the field as missing on every single upload."""
+    index = build_header_index(["Staff ID", "Actual Monthly Basic Salary"])
+    spec = next(s for s in CONTRACT_FIELDS if s.key == "basic_salary_actual")
+    assert find_alias(index, spec.source_aliases) == "Actual Monthly Basic Salary"
+
+    total, matched, missing = check_field_mapping(index, CONTRACT_FIELDS)
+    assert "basic_salary_actual" not in {m["key"] for m in missing}
 
 
 def test_formal_and_contract_deduction_fields_match_spelled_out_headers():

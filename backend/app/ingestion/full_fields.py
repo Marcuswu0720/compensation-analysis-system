@@ -128,17 +128,20 @@ CONTRACT_FIELDS: list[FieldSpec] = [
     FieldSpec("resign_date", "Resign Date", "离职时间", ("Exit Date",), True),
     # Contract-Flexi's real header is "Should Working Days", not "Working Days".
     FieldSpec("should_work_days", "Should Work Days", "应出勤日", ("Working Days", "Should Working Days"), True),
-    # NOTE: salary_components.py's ANALYSIS-layer `basic_salary_actual` reads
-    # "Actual Monthly Basic Salary" (verified against real data in an earlier
-    # session) and is NOT changed here - this FieldSpec only feeds this
-    # module's diagnostic check (does a raw column exist for the PRD's
-    # "Basic Salary" target field), which the mapping file says is sourced
-    # from "Monthly Basic Salary". These two may be genuinely different raw
-    # columns in the real file (a contracted rate vs. the actual-paid
-    # amount) - the exported "Basic Salary" *value* is always the already-
-    # validated analysis-layer number (see ANALYSIS_KEYS below), never a
-    # fresh extraction from this alias.
-    FieldSpec("basic_salary_actual", "Basic Salary", "底薪标准", ("Monthly Basic Salary",), True),
+    # This FieldSpec only feeds the upload-time diagnostic (does a raw column
+    # exist for the PRD's "Basic Salary" target field) - the exported value
+    # itself always comes from salary_components.py's already-validated
+    # analysis-layer number (see ANALYSIS_KEYS below), never a fresh
+    # extraction from this alias. The diagnostic used to check for a
+    # "Monthly Basic Salary" column per the mapping file, but real Contract
+    # files (confirmed against a real January upload) don't have a column by
+    # that exact name - only "Actual Monthly Basic Salary", which is also
+    # what the analysis layer actually reads. Matching the same column here
+    # makes the diagnostic agree with reality instead of falsely reporting
+    # "Basic Salary missing" on every upload despite the number being
+    # correct; "Monthly Basic Salary" is kept as a fallback alias in case
+    # some other entity's file genuinely has a separate column by that name.
+    FieldSpec("basic_salary_actual", "Basic Salary", "底薪标准", ("Actual Monthly Basic Salary", "Monthly Basic Salary"), True),
     # Contract-Flexi's real header has extra trailing wording ("... / POS
     # Storage Subcidy") that isn't just casing/whitespace drift.
     FieldSpec(

@@ -144,6 +144,14 @@
     验证别名能匹配到）和
     `test_confirmed_bonus_batch_falls_back_to_base_employee_descriptive_fields_when_blank`（验证
     奖金行自己字段为空时能从底薪批次员工兜底）。
+  3. **Contract 的 `basic_salary_actual` 诊断误报**（用户用另一份真实文件上传后追问，并且明确
+     确认"下载出来的数据本身是对的"）——上传时的字段匹配诊断一直对 Contract-PP/Contract-Flexi
+     报"Basic Salary 未匹配到"，别名用的是 `"Monthly Basic Salary"`，但真实文件里没有这一列，
+     只有 `"Actual Monthly Basic Salary"`（分析层 `salary_components.py` 一直用的就是这一列，
+     导出数值本身从来没错）。这是之前"未完成事项"里记录过的一个已知诊断层面不精确，这次因为
+     持续让用户误以为数据丢失，顺手改成把 `"Actual Monthly Basic Salary"` 设为第一别名（分析层
+     实际读的就是这列），旧的 `"Monthly Basic Salary"` 保留作兜底别名。新增回归测试
+     `test_contract_basic_salary_diagnostic_matches_real_column`。
 
 ## 未完成 / 待跟进事项
 
@@ -171,11 +179,8 @@
   - `gross_salary`（税前薪资总额）目前是直接读原始表现成列，不是重新加总算出来的，真实数据里
     大约 1-2% 的记录跟"底薪+绩效+奖金+加班+其他收入"加总对不上（原始表本身的调整，不是解析
     错误），校验摘要会报出这类记录数量供人工抽查，但没有更进一步的自动核对逻辑。
-  - Contract 的 `basic_salary_actual` 诊断别名（`full_fields.py` 里那条 FieldSpec 用的是
-    "Monthly Basic Salary"，跟真实分析层用的"Actual Monthly Basic Salary"不是同一列）是一个
-    已经在代码注释里说明过的、刻意保留的诊断层面的不精确——不影响导出数值本身（那个值来自分析层，
-    不是这条 FieldSpec），只是每次上传都会在字段匹配诊断里报一条"缺失"，如果这个持续困扰用户，
-    可以考虑把这条诊断标签改得更准确。
+  - ~~Contract 的 `basic_salary_actual` 诊断别名~~——已在"V1.9 热修复之后的第二轮"第 3 条修复，
+    诊断改成检查 `"Actual Monthly Basic Salary"`（分析层实际读的列），不再对真实文件误报。
   - 奖金批次的 Job Grade：已确认真实文件本身就没有这一列，不是软件的匹配问题——如果以后 HR
     换了新模板加上了这一列，不需要改代码，`check_field_mapping` 会自动认出来。
 - **问答模块**：目前只是关键词/正则匹配（`qa/rule_engine.py`），能识别的月份格式和部门中文
