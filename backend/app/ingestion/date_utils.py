@@ -21,6 +21,18 @@ def format_date_value(value):
         return value.date().isoformat()
     if isinstance(value, datetime.date):
         return value.isoformat()
+    if isinstance(value, datetime.time):
+        # Real bonus files have shown up with a date-column cell that openpyxl
+        # reads back as a bare datetime.time (e.g. datetime.time(0, 0)) rather
+        # than a date/datetime - some upstream export step lost the date part
+        # and left only a time-of-day. Not JSON-serializable as-is, and
+        # str(datetime.date) doesn't handle it (isinstance(time, date) is
+        # False - they're unrelated types), so json.dumps() crashed the whole
+        # upload instead of just leaving this one cell odd-looking. Format it
+        # to a plain HH:MM:SS string like every other date-like value here,
+        # rather than silently dropping it to None - it's a faithful (if
+        # unhelpful-looking) rendering of exactly what the source cell had.
+        return value.isoformat()
     return value
 
 

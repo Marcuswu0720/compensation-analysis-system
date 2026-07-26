@@ -152,6 +152,22 @@
      持续让用户误以为数据丢失，顺手改成把 `"Actual Monthly Basic Salary"` 设为第一别名（分析层
      实际读的就是这列），旧的 `"Monthly Basic Salary"` 保留作兜底别名。新增回归测试
      `test_contract_basic_salary_diagnostic_matches_real_column`。
+  4. **奖金上传直接崩溃：`Object of type time is not JSON serializable`**（用户上传真实二月
+     奖金文件复现，并提供了实际文件）——用真实文件定位到 `Feb Bonus-Flexi` sheet 有 11 行的
+     `Joining date` 格子被 openpyxl 读成裸的 `datetime.time(0, 0)`（源文件某个环节把日期部分
+     丢了，只剩时间部分），不是 `datetime.datetime`/`datetime.date`。`date_utils.py` 的
+     `format_date_value()` 之前只判断了这两种类型，`datetime.time` 既不是它们的子类也不会被
+     匹配到，原样往下传，最后 `json.dumps()` 序列化整行数据时才崩溃，导致**这个月的奖金批次
+     完全无法上传**（比字段丢失更严重，是全量失败而不是某几列是空的）。修复：
+     `format_date_value()` 新增对 `datetime.time` 的分支，转成 `"HH:MM:SS"` 字符串（跟
+     datetime/date 转成字符串是同一个思路，不静默丢弃成 None），不再让整个上传崩溃。已用用户
+     提供的真实文件跑通完整 `stage_upload` 流程（1565 条记录，2 个 sheet）验证过，新增回归
+     测试 `test_format_date_value_converts_bare_time_objects_without_crashing`（
+     `test_date_utils.py`）和 `test_bonus_batch_parser_handles_bare_time_cells_without_crashing`
+     （`test_full_fields.py`）。**这类"某个字段的实际单元格类型跟预期完全不符"的问题目前只在
+     `format_date_value()` 这一个入口做了兜底**——如果以后其他非日期字段也出现过 Excel 把内容
+     存成意外类型（比如数字列被存成时间、文本列被存成公式对象）导致同样的 JSON 序列化崩溃，
+     思路是一样的：定位到具体类型，在这个统一函数里加一个分支，而不是在每个调用点各自防御。
 
 ## 未完成 / 待跟进事项
 

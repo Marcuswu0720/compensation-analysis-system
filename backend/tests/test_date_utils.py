@@ -10,6 +10,18 @@ def test_format_date_value_converts_real_datetime_objects():
     assert format_date_value(None) is None
 
 
+def test_format_date_value_converts_bare_time_objects_without_crashing():
+    """Regression test found against a real February bonus file: a handful
+    of Joining Date cells in the Contract-Flexi bonus sheet came back from
+    openpyxl as datetime.time(0, 0) (the date part got lost somewhere
+    upstream, leaving only a time-of-day) instead of a date/datetime -
+    datetime.time isn't a subclass of datetime.date, so the old
+    format_date_value() left it untouched, and json.dumps() later crashed
+    the entire upload with "Object of type time is not JSON serializable"."""
+    assert format_date_value(datetime.time(0, 0)) == "00:00:00"
+    assert format_date_value(datetime.time(8, 30, 15)) == "08:30:15"
+
+
 def test_format_date_for_display_strips_stale_time_suffix_from_old_rows():
     """Regression test: a row confirmed before format_date_value() existed
     already has a plain string baked into the database, e.g.

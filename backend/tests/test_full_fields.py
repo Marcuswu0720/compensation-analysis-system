@@ -429,6 +429,18 @@ def test_bonus_batch_parser_handles_real_datetime_cells_without_crashing():
     assert result.rows[0]["joining_date"] == "2021-03-01"
 
 
+def test_bonus_batch_parser_handles_bare_time_cells_without_crashing():
+    """Regression test found against a real February bonus file: a handful
+    of Contract-Flexi rows had a Joining Date cell that openpyxl reads back
+    as datetime.time(0, 0) (date part lost upstream, only a time-of-day
+    left) - this crashed the whole upload with "Object of type time is not
+    JSON serializable" before format_date_value() learned to handle it."""
+    wb_bytes = build_full_bonus_workbook([_bonus_row(**{"Joining Date": datetime.time(0, 0)})])
+    result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))
+    json.dumps(result.rows[0])  # must not raise
+    assert result.rows[0]["joining_date"] == "00:00:00"
+
+
 def test_confirmed_bonus_batch_parses_entity_and_employment_type_directly(db_session):
     """PRD V1.8 correction: the bonus template DOES have its own Entity and
     Employment Type columns (V1.6 wrongly assumed neither existed) - a row
