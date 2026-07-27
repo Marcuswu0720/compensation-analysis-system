@@ -35,6 +35,7 @@ def get_supplemental_cost_by_month(
     entity: ScopeValue,
     scope_rules: list[ScopeRule] | None,
     employment_type: str | None = None,
+    pay_type: str | None = None,
 ) -> dict[str, float]:
     """The bonus/backpay total (SupplementalPaySnapshot.amount) that
     get_trend() folds into total_hr_cost on top of the base batch - broken
@@ -48,7 +49,13 @@ def get_supplemental_cost_by_month(
     `employment_type` is optional and unused by get_trend() itself (that
     figure is never split by employment type) - it exists for callers like
     get_categories_trend that do support a Formal/Contract filter and need
-    the supplemental total scoped to match the same filtered headcount."""
+    the supplemental total scoped to match the same filtered headcount.
+
+    `pay_type` ('bonus' | 'backpay' | None for both combined) is optional too
+    and unused by get_trend() (total_hr_cost always wants both combined) - it
+    exists for callers like get_categories_trend's dedicated 奖金批次/补发批次
+    categories (PRD: 薪资类目页面新增类目，让这部分金额不再只隐藏在"人力成本
+    合计"里) that need just one pay_type's contribution broken out."""
     q = db.query(SupplementalPaySnapshot.month, func.sum(SupplementalPaySnapshot.amount)).filter(
         SupplementalPaySnapshot.is_deleted == False  # noqa: E712
     )
@@ -59,8 +66,42 @@ def get_supplemental_cost_by_month(
     q = apply_permission_scope(q, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
     if employment_type:
         q = q.filter(SupplementalPaySnapshot.employment_type == employment_type)
+    if pay_type:
+        q = q.filter(SupplementalPaySnapshot.pay_type == pay_type)
     q = q.group_by(SupplementalPaySnapshot.month)
     return {month: amount or 0.0 for month, amount in q.all()}
+
+
+def get_supplemental_amounts_by_month(
+    db: Session,
+    months: list[str] | None,
+    department: ScopeValue,
+    entity: ScopeValue,
+    scope_rules: list[ScopeRule] | None,
+    employment_type: str | None = None,
+    pay_type: str | None = None,
+) -> dict[str, list[float]]:
+    """Same filters as get_supplemental_cost_by_month, but returns each
+    month's individual row amounts instead of a pre-summed total. Needed by
+    get_categories_trend's per-capita path for the 奖金批次/补发批次
+    categories' median (a median needs the actual per-recipient values, a
+    SQL SUM can't give you that)."""
+    q = db.query(SupplementalPaySnapshot.month, SupplementalPaySnapshot.amount).filter(
+        SupplementalPaySnapshot.is_deleted == False  # noqa: E712
+    )
+    if months:
+        q = q.filter(SupplementalPaySnapshot.month.in_(months))
+    q = apply_scope_filter(q, SupplementalPaySnapshot.department1, department)
+    q = apply_scope_filter(q, SupplementalPaySnapshot.entity, entity)
+    q = apply_permission_scope(q, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
+    if employment_type:
+        q = q.filter(SupplementalPaySnapshot.employment_type == employment_type)
+    if pay_type:
+        q = q.filter(SupplementalPaySnapshot.pay_type == pay_type)
+    result: dict[str, list[float]] = {}
+    for month, amount in q.all():
+        result.setdefault(month, []).append(amount or 0.0)
+    return result
 
 
 def get_trend(
