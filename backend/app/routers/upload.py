@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl.styles import Font
 from sqlalchemy.orm import Session
 
+from ..compute.categories import COMPOSITION_REAL_FIELDS
 from ..compute.export import RECONCILIATION_COLUMNS, build_department_category_summary
 from ..database import get_db
 from ..ingestion.commit import confirm_upload, delete_confirmed_batch, reassign_month
@@ -31,6 +32,7 @@ async def upload_file(
     month: str,
     salary_type: str,
     file: UploadFile,
+    category: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
@@ -38,10 +40,21 @@ async def upload_file(
         raise HTTPException(status_code=400, detail="month 格式必须为 YYYY-MM")
     if salary_type not in SALARY_TYPES:
         raise HTTPException(status_code=400, detail=f"salary_type 必须是 {SALARY_TYPES} 之一")
+    if category:
+        if salary_type != "backpay":
+            raise HTTPException(status_code=400, detail="category 只能在上传补发薪资批次时指定")
+        if category not in COMPOSITION_REAL_FIELDS:
+            raise HTTPException(status_code=400, detail=f"category 必须是 {COMPOSITION_REAL_FIELDS} 之一")
     content = await file.read()
     try:
         batch = stage_upload(
-            db, month=month, file_bytes=content, filename=file.filename, uploaded_by=user.username, salary_type=salary_type
+            db,
+            month=month,
+            file_bytes=content,
+            filename=file.filename,
+            uploaded_by=user.username,
+            salary_type=salary_type,
+            category=category,
         )
     except Exception as e:  # noqa: BLE001 - surface parsing failures to the uploader
         raise HTTPException(status_code=422, detail=f"解析失败: {e}") from e
@@ -70,6 +83,7 @@ def list_batches(
             "id": b.id,
             "month": b.month,
             "salary_type": b.salary_type,
+            "category": b.category,
             "status": b.status,
             "original_filename": b.original_filename,
             "uploaded_by": b.uploaded_by,
@@ -202,6 +216,7 @@ def _batch_summary(batch: UploadBatch) -> dict:
         "id": batch.id,
         "month": batch.month,
         "salary_type": batch.salary_type,
+        "category": batch.category,
         "status": batch.status,
         "original_filename": batch.original_filename,
         "uploaded_by": batch.uploaded_by,

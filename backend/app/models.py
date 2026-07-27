@@ -43,6 +43,12 @@ class UploadBatch(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending_review")
     staged_data: Mapped[str] = mapped_column(Text)  # JSON blob: parsed rows + summary, shape depends on salary_type
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Only meaningful for salary_type='backpay': which existing 薪资类目 this
+    # batch's amount should be attributed to (one of compute/categories.py's
+    # COMPOSITION_REAL_FIELDS keys, e.g. 'overtime_amount' for a "客服团队
+    # 加班费补发" file) instead of the generic "补发批次" bucket. NULL means
+    # uncategorized - same as every batch before this feature existed.
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class CanonicalName(Base):
@@ -178,6 +184,12 @@ class SupplementalPaySnapshot(Base):
     matched_base_employee: Mapped[bool] = mapped_column(Boolean, default=False)
     upload_batch_id: Mapped[int | None] = mapped_column(ForeignKey("upload_batches.id"), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Denormalized copy of the owning UploadBatch.category (see above) - only
+    # ever set for pay_type='backpay' rows whose batch was tagged with a
+    # target 薪资类目 at upload time. Kept on the row itself (like pay_type
+    # already is) so compute/categories.py can filter/group by it in plain
+    # SQL without a join back to upload_batches.
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # PRD V1.6 §2.1 - only populated for pay_type='bonus' rows.
     department2: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -70,6 +70,9 @@ def run_migrations(engine: Engine) -> None:
         if "salary_type" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE upload_batches ADD COLUMN salary_type VARCHAR(16) NOT NULL DEFAULT 'base'"))
+        if "category" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE upload_batches ADD COLUMN category VARCHAR(32)"))
 
     if "users" in inspector.get_table_names():
         columns = {c["name"] for c in inspector.get_columns("users")}
@@ -94,6 +97,8 @@ def run_migrations(engine: Engine) -> None:
             for col, sql_type in {**SUPPLEMENTAL_FULL_DETAIL_COLUMNS, **SUPPLEMENTAL_V1_8_COLUMNS}.items():
                 if col not in columns:
                     conn.execute(text(f"ALTER TABLE supplemental_pay_snapshot ADD COLUMN {col} {sql_type}"))
+            if "category" not in columns:
+                conn.execute(text("ALTER TABLE supplemental_pay_snapshot ADD COLUMN category VARCHAR(32)"))
 
     for table in ["monthly_employee_snapshot", "monthly_bonus_snapshot", "supplemental_pay_snapshot", "exit_records"]:
         if table not in inspector.get_table_names():

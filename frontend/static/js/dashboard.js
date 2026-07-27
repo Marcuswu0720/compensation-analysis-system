@@ -2,6 +2,12 @@ const fmtMoney = (n) => '₦' + Number(n || 0).toLocaleString('en-NG', { maximum
 const fmtInt = (n) => Number(n || 0).toLocaleString('en-NG');
 const fmtDateTime = (d) => new Date(d).toLocaleString(currentLang() === 'en' ? 'en-US' : 'zh-CN');
 const SALARY_TYPE_LABEL = () => ({ base: t('salary_type.base'), bonus: t('salary_type.bonus'), backpay: t('salary_type.backpay') });
+// Mirrors backend compute/categories.py's COMPOSITION_REAL_FIELDS - the only
+// categories a 补发批次 upload can be tagged with (see routers/upload.py's
+// validation). Kept as a plain list here rather than derived from
+// metaCategories since it's a fixed subset, not "every category that page
+// happens to expose".
+const BACKPAY_CATEGORY_KEYS = ['basic_salary_actual', 'performance_bonus', 'commission_bonus', 'overtime_amount', 'other_income', 'employer_statutory_cost'];
 const STATUS_LABEL = () => ({
   pending_review: t('upload.status.pending_review'),
   confirmed: t('upload.status.confirmed'),
@@ -62,12 +68,24 @@ function issueSeverity(issue) {
   return ['missing_field', 'unrecognized_sheet'].includes(issue.issue_type) ? 'severe' : '';
 }
 
+// batch.category is one of BACKPAY_CATEGORY_KEYS (or null) - looked up
+// against the cached /api/meta category list so the label follows the
+// current UI language the same way every other category label does.
+function backpayCategoryLabel(value) {
+  if (!value) return '';
+  const cat = metaCategories.find((c) => c.value === value);
+  return cat ? categoryLabel(cat) : value;
+}
+
 function renderBatch(batch) {
   currentBatchId = batch.id;
   const card = document.getElementById('reviewCard');
   card.style.display = 'block';
   document.getElementById('reviewMonth').textContent = `${batch.month}（${batch.original_filename}）`;
-  document.getElementById('reviewSalaryType').textContent = SALARY_TYPE_LABEL()[batch.salary_type] || batch.salary_type;
+  const salaryTypeLabel = SALARY_TYPE_LABEL()[batch.salary_type] || batch.salary_type;
+  document.getElementById('reviewSalaryType').textContent = batch.category
+    ? `${salaryTypeLabel} · ${backpayCategoryLabel(batch.category)}`
+    : salaryTypeLabel;
 
   const s = batch.summary;
   if (batch.salary_type === 'base') {
@@ -121,7 +139,7 @@ async function loadUploadHistory() {
     .map(
       (b) => `
       <div class="upload-list-item">
-        <span>${b.month} · ${salaryTypeLabel[b.salary_type] || b.salary_type} · ${b.original_filename} · ${t('upload.uploaded_by')} ${b.uploaded_by} · ${fmtDateTime(b.uploaded_at)}</span>
+        <span>${b.month} · ${salaryTypeLabel[b.salary_type] || b.salary_type}${b.category ? ' (' + backpayCategoryLabel(b.category) + ')' : ''} · ${b.original_filename} · ${t('upload.uploaded_by')} ${b.uploaded_by} · ${fmtDateTime(b.uploaded_at)}</span>
         <span>
           <span class="badge ${b.status}">${statusLabel[b.status] || b.status}</span>
           ${isAdmin && b.status === 'pending_review' ? `
@@ -177,9 +195,22 @@ async function deleteBatch(batchId, month) {
 function initUploadTab() {
   if (currentUserRole !== 'admin') return; // viewers never touch the upload router - see routers/upload.py's require_admin
 
+  const salaryTypeSelect = document.getElementById('uploadSalaryType');
+  const backpayCategoryWrap = document.getElementById('uploadBackpayCategoryWrap');
+  const backpayCategoryHint = document.getElementById('uploadBackpayCategoryHint');
+  const syncBackpayCategoryVisibility = () => {
+    const isBackpay = salaryTypeSelect.value === 'backpay';
+    backpayCategoryWrap.style.display = isBackpay ? '' : 'none';
+    backpayCategoryHint.style.display = isBackpay ? '' : 'none';
+    if (!isBackpay) document.getElementById('uploadBackpayCategory').value = '';
+  };
+  salaryTypeSelect.addEventListener('change', syncBackpayCategoryVisibility);
+  syncBackpayCategoryVisibility();
+
   document.getElementById('uploadBtn').addEventListener('click', async () => {
     const month = document.getElementById('uploadMonth').value;
-    const salaryType = document.getElementById('uploadSalaryType').value;
+    const salaryType = salaryTypeSelect.value;
+    const category = salaryType === 'backpay' ? document.getElementById('uploadBackpayCategory').value : '';
     const fileInput = document.getElementById('uploadFile');
     const errEl = document.getElementById('uploadError');
     errEl.textContent = '';
@@ -190,10 +221,11 @@ function initUploadTab() {
     const form = new FormData();
     form.append('file', fileInput.files[0]);
     try {
-      const batch = await apiJson(`/api/upload?month=${encodeURIComponent(month)}&salary_type=${encodeURIComponent(salaryType)}`, {
-        method: 'POST',
-        body: form,
-      });
+      const categoryParam = category ? `&category=${encodeURIComponent(category)}` : '';
+      const batch = await apiJson(
+        `/api/upload?month=${encodeURIComponent(month)}&salary_type=${encodeURIComponent(salaryType)}${categoryParam}`,
+        { method: 'POST', body: form }
+      );
       renderBatch(batch);
       loadUploadHistory();
     } catch (e) {
@@ -268,6 +300,14 @@ async function populateMeta() {
   };
   fillCategorySelect('catCompareCategory');
   renderCatTrendCategoryChecklist(meta.categories);
+
+  const backpayCategorySelect = document.getElementById('uploadBackpayCategory');
+  const backpayCurrent = backpayCategorySelect.value;
+  const backpayOptions = meta.categories.filter((c) => BACKPAY_CATEGORY_KEYS.includes(c.value));
+  backpayCategorySelect.innerHTML =
+    `<option value="" data-i18n="upload.backpay_category.none">${t('upload.backpay_category.none')}</option>` +
+    backpayOptions.map((c) => `<option value="${c.value}">${categoryLabel(c)}</option>`).join('');
+  if (backpayOptions.some((c) => c.value === backpayCurrent)) backpayCategorySelect.value = backpayCurrent;
 
   fillSelect('catTrendDept', meta.departments, true);
   fillSelect('catTrendEntity', meta.entities, true);

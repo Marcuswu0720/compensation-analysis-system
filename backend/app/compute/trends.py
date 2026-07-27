@@ -36,6 +36,8 @@ def get_supplemental_cost_by_month(
     scope_rules: list[ScopeRule] | None,
     employment_type: str | None = None,
     pay_type: str | None = None,
+    category: str | None = None,
+    uncategorized: bool = False,
 ) -> dict[str, float]:
     """The bonus/backpay total (SupplementalPaySnapshot.amount) that
     get_trend() folds into total_hr_cost on top of the base batch - broken
@@ -55,7 +57,17 @@ def get_supplemental_cost_by_month(
     and unused by get_trend() (total_hr_cost always wants both combined) - it
     exists for callers like get_categories_trend's dedicated 奖金批次/补发批次
     categories (PRD: 薪资类目页面新增类目，让这部分金额不再只隐藏在"人力成本
-    合计"里) that need just one pay_type's contribution broken out."""
+    合计"里) that need just one pay_type's contribution broken out.
+
+    `category`/`uncategorized`: a 补发批次 upload can optionally be tagged
+    with an existing 薪资类目 (e.g. 加班费) at upload time - see models.py's
+    UploadBatch.category docstring. `category="overtime_amount"` sums only
+    backpay rows tagged with that category (folded into that category's own
+    total elsewhere instead of the generic "补发批次" bucket); `uncategorized=
+    True` sums backpay rows with NO tag (still the generic "补发批次" bucket,
+    for batches uploaded before this feature existed or left unassigned).
+    Mutually exclusive with each other; unused by get_trend() (the grand
+    total wants every backpay row regardless of tag)."""
     q = db.query(SupplementalPaySnapshot.month, func.sum(SupplementalPaySnapshot.amount)).filter(
         SupplementalPaySnapshot.is_deleted == False  # noqa: E712
     )
@@ -68,6 +80,10 @@ def get_supplemental_cost_by_month(
         q = q.filter(SupplementalPaySnapshot.employment_type == employment_type)
     if pay_type:
         q = q.filter(SupplementalPaySnapshot.pay_type == pay_type)
+    if uncategorized:
+        q = q.filter(SupplementalPaySnapshot.category.is_(None))
+    elif category:
+        q = q.filter(SupplementalPaySnapshot.category == category)
     q = q.group_by(SupplementalPaySnapshot.month)
     return {month: amount or 0.0 for month, amount in q.all()}
 
@@ -80,12 +96,14 @@ def get_supplemental_amounts_by_month(
     scope_rules: list[ScopeRule] | None,
     employment_type: str | None = None,
     pay_type: str | None = None,
+    category: str | None = None,
+    uncategorized: bool = False,
 ) -> dict[str, list[float]]:
-    """Same filters as get_supplemental_cost_by_month, but returns each
-    month's individual row amounts instead of a pre-summed total. Needed by
-    get_categories_trend's per-capita path for the 奖金批次/补发批次
-    categories' median (a median needs the actual per-recipient values, a
-    SQL SUM can't give you that)."""
+    """Same filters as get_supplemental_cost_by_month (including category/
+    uncategorized), but returns each month's individual row amounts instead
+    of a pre-summed total. Needed by get_categories_trend's per-capita path
+    for the 奖金批次/补发批次 categories' median (a median needs the actual
+    per-recipient values, a SQL SUM can't give you that)."""
     q = db.query(SupplementalPaySnapshot.month, SupplementalPaySnapshot.amount).filter(
         SupplementalPaySnapshot.is_deleted == False  # noqa: E712
     )
@@ -98,6 +116,10 @@ def get_supplemental_amounts_by_month(
         q = q.filter(SupplementalPaySnapshot.employment_type == employment_type)
     if pay_type:
         q = q.filter(SupplementalPaySnapshot.pay_type == pay_type)
+    if uncategorized:
+        q = q.filter(SupplementalPaySnapshot.category.is_(None))
+    elif category:
+        q = q.filter(SupplementalPaySnapshot.category == category)
     result: dict[str, list[float]] = {}
     for month, amount in q.all():
         result.setdefault(month, []).append(amount or 0.0)
