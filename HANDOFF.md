@@ -119,8 +119,15 @@
      解析出来（不是格式问题，是当时的字段别名就没匹配上），那部分数据没法靠读时修复找回，只能
      删除重新上传那个月的批次——这两种坑的区别（"格式问题可以补救" vs "从没抓到值必须重新
      上传"）以后遇到类似"老数据显示不对"的反馈时要先分清楚是哪一种。
-- **V1.9 热修复之后的第二轮**（用户用真实一月导出文件复核后反馈"扣款金额依旧丢失"+"奖金基础
-  信息依旧丢失"，本次会话只处理这两类，未改动其他文件）：
+- **V1.9 热修复之后的第二轮**（本次会话，起点是用户用真实一月导出文件复核后反馈"扣款金额依旧
+  丢失"+"奖金基础信息依旧丢失"，过程中用户又陆续用真实文件/真实操作反馈了另外几个问题，全部在
+  同一轮会话里处理。六项：① 正式工/合同工扣款金额字段别名猜错 ② 奖金批次基础信息缺兜底
+  ③ Contract 的 basic_salary_actual 诊断误报 ④ 奖金上传遇到裸 `datetime.time` 单元格直接崩溃
+  ⑤ "薪资类目"页面"人力成本合计"漏加奖金/补发批次 ⑥ 导出接口疑似内存问题导致整个服务崩溃重启
+  （**只诊断、没有修复**，见"未完成事项"）。前五项每次改完都单独 commit + push 到
+  `claude/data-export-field-loss-fix-bsy02i`，并在用户确认后合并进线上分支
+  `claude/compensation-analysis-site-un8j4k`（均为快进合并，无冲突；最后一次因为线上分支同期
+  被另一个会话加了双语 UI 功能，改成了普通合并，文件没有重叠，依旧无冲突）。以下是每一项的细节：
   1. **正式工/合同工"扣款金额"字段的别名guess错误**——`FORMAL_FIELDS` 里
      `late_deduction`/`porated_days_deduction`/`absent_deduction` 三个字段的 `source_aliases`
      此前只有缩写形式（`"Late Ded."`/`"Porated Days Ded."`/`"Absent Ded."`），`CONTRACT_FIELDS`
@@ -190,8 +197,26 @@
      对比）和 `get_cost_composition`（成本构成占比）这两个同文件里的其他函数**没有**改，依旧是
      底薪批次口径——这次只改了用户实际反馈问题的"类目趋势/两点比较"，如果以后这两个功能也被发现
      有同样的不一致，思路是复用同一个 `get_supplemental_cost_by_month()`，不要再造一个新的查询。
+  6. **"下载明细"接口疑似内存问题导致整个服务反复重启（只诊断，没有修复）**——用户下载
+     2025-12 至 2026-06（跨 7 个月、三种批次类型全选、不限部门/实体）时收到 502，同时贴出的
+     Render 日志显示服务在没有正常部署记录的情况下反复 `Instance restarted`（大约每十几分钟
+     一次）。诊断结论（详见"未完成事项"，因为没有下代码所以只在那边跟踪）：`routers/
+     export.py::export_detail()` 是把请求范围内所有符合条件的行一次性在内存里拼成一整个
+     openpyxl workbook 再整体转成字节流返回，不是流式/分批的；线上是 Render `starter`
+     套餐，内存有限，大范围、不限批次类型/部门的导出请求行数可能有几万行，很可能把整个进程内存
+     打爆导致 OOM 重启——这样炸的不只是发起下载的那个用户，是**同一时间段所有用户的请求都会
+     跟着断掉**，比单纯的下载失败更严重。**这一条这次会话没有动代码**，下次接手要把它当成一个
+     真实的稳定性问题来处理，不能不当回事。
 
 ## 未完成 / 待跟进事项
+
+- **"下载明细"大范围导出可能导致整个服务 OOM 重启（上面第 6 条，优先级最高，涉及服务可用性）**：
+  复现条件是"月份范围较大 + 批次类型全选/不限部门实体"，现象是导出请求 502，同时 Render 日志
+  显示服务在没有正常部署的情况下反复重启。还没有拿到 Render Metrics 页的内存曲线做最终确认
+  （这个沙盒环境连不上生产环境，见下面第 4 条已知的坑），但代码本身（`export.py` 一次性在内存
+  里拼完整个 workbook）足够可疑，值得直接着手做防护，不必等内存曲线证实：思路可以是
+  (a) 给单次导出加一个最大行数/最大月份跨度的软上限，超出时返回明确的 400 提示而不是硬扛，
+  (b) 或者把 `openpyxl.Workbook()` 换成 `write_only=True` 的流式写入模式，避免整份文件常驻内存。
 
 - **这次导出文件里还有其他字段是空的，但不在这次任务范围内，没有动**：用户这次附的真实一月导出
   文件里，合同工明细的 `Reporting Line`/`Work Station`/`Should Work Days`/`Airtime/Data
@@ -202,8 +227,17 @@
   的坑"第 3 条，旧数据不会因为代码修复而自动更新），需要先确认用户是否已经用修复后的代码重新
   上传过这个月的批次；如果重新上传后这几个字段依旧是空的，那才说明上一轮的别名修复本身有问题，
   需要另外排查（比如这个真实文件里合同工的表头写法比之前验证过的两种更多）。
-- **合并到 main 分支**：早前提过一次要不要把 `claude/compensation-analysis-site-un8j4k` 合并
-  到 `main`，用户没有回应，之后没有再提——不要擅自合并，除非用户明确要求。
+- **线上分支同期多了一个双语 UI 功能，不是本次会话做的**：合并本次会话最后一项修复时发现
+  `claude/compensation-analysis-site-un8j4k` 上多了一个不在本次会话记录里的提交"Add bilingual
+  (Chinese/English) UI with a language toggle"（新增 `frontend/static/js/i18n.js`，给
+  `dashboard.html`/`login.html` 全面加了 `data-i18n` 属性和中英文切换），应该是另一个并行会话
+  做的。跟本次会话的改动文件没有重叠，合并时没有冲突，但下次接手如果发现前端文案改成
+  `data-i18n="xxx"` 这种写法、多了个语言切换开关，不用惊讶——不是这份 HANDOFF 记录的哪一轮改的，
+  具体决策细节要去看那个提交自己的 commit message。
+- ~~合并到 main 分支~~——**本次会话已核实这一条过时了**：仓库里根本不存在 `main` 分支，
+  `claude/compensation-analysis-site-un8j4k` 本身就是 Render 实际部署的分支（见"部署信息"），
+  不存在"还没合并到 main 所以没生效"的问题。以后不用再纠结这一条，除非用户明确要求另建一个
+  `main` 分支。
 - **GitHub 仓库疑似改名**：`git push` 时远端一直提示"This repository moved. Please use the
   new location: https://github.com/Marcuswu0720/compensation-analysis-system.git"，早前
   已经提醒过用户，用户没有回应。目前推送仍然通过重定向成功，不算紧急阻塞项，但如果未来推送突然
@@ -252,12 +286,43 @@
    Pension/ITF/HMO 这些列还在原始表里就以为需要重新加总。
 6. **迁移脚本是手写的，不是 Alembic**——加新列时记得同时改 `migrations.py`（对应表的列名/类型
    字典）和 `models.py`，两处不同步会导致新代码读不到刚加的列，或者列加了但 ORM 模型不知道。
+7. **`verified=True`/"已经跟权威映射文件核对过"不等于"真的针对真实文件测试过"**——本次会话修的
+   正式工/合同工扣款金额三个字段，别名从 V1.8 建立起就标了 `verified=True`（因为字面上是抄自
+   权威映射文件"数据导出展示字段-映射.xlsx"），但那份映射文件给的可能是缩写/截断文本，从没拿一份
+   真实文件实际核对过表头长什么样。以后新加/信任一条别名，`verified=True` 只应该表示"拿真实文件
+   核对过"，不能表示"抄自某份文档、看起来像是权威来源"——这两者不是一回事，本次这几个字段就是
+   混淆了两者才漏网的。
+8. **测试用"FieldSpec 自己的别名"生成假表头，测不出真实文件的别名错误**——`test_full_fields.py`
+   里有一类历史测试（比如 V1.8 时代写的"字段匹配诊断全部匹配"测试）是拿 `FORMAL_FIELDS` 等清单
+   自己声明的 `source_aliases` 反过来拼一份"假表头"喂给解析函数，这种测试对"函数逻辑本身没写错"
+   有意义，但对"这个别名到底对不对"完全没有验证力——别名如果本来就猜错了，用别名自己生成的假表头
+   永远会"验证通过"，这是一种循环论证。新增字段别名的回归测试，应该像本次会话新加的几条一样，
+   用不依赖该别名本身拼出来的、看起来像真实表头的字符串（最好是真的从用户文件里抄的）。
+9. **"总成本/人力成本"这个概念在代码里不是只有一处实现**——`compute/trends.py::get_trend()`（
+   趋势查询页面，会把底薪+奖金+补发都加总，是这几处里最先做对、也是本次会话认定的"标准答案"）、
+   `compute/categories.py::get_categories_trend()`（薪资类目页面，本次会话修复后"人力成本合计"
+   这一项也对齐了）、`compute/categories.py::get_cost_composition()`（成本构成占比，依旧只有
+   底薪批次，没有对齐）、`compute/categories.py::compare_departments_by_category()`（部门对比，
+   同样依旧只有底薪批次）——后两个如果以后被发现跟用户预期的"总成本"对不上，别再各自加一段查询
+   逻辑，复用 `compute/trends.py::get_supplemental_cost_by_month()`。
+10. **Excel 单元格的实际 Python 类型可能跟表头暗示的完全不符**——本次会话遇到一个"Joining Date"
+    列里混进了裸的 `datetime.time` 值（不是 `datetime.datetime`/`datetime.date`）导致
+    `json.dumps()` 直接崩溃整个上传。目前这类"意外类型"兜底只在 `date_utils.py::
+    format_date_value()` 这一个入口做了处理（覆盖 `datetime`/`date`/`time` 三种），如果以后
+    别的字段也遇到类似的意外类型（比如公式单元格、合并单元格返回 `None` 之外的怪值），思路一样：
+    定位到具体类型，在这个统一入口加分支，不要在各个调用点分别 try/except 兜底。
 
 ## 部署信息
 
-- Render Blueprint 部署（`render.yaml`），`main` 分支推送后自动构建；当前工作分支是
-  `claude/compensation-analysis-site-un8j4k`，尚未合并到 `main`（见上面"未完成事项"）。
+- Render Blueprint 部署（`render.yaml`）。**本次会话实际观察确认**：仓库里根本没有 `main`
+  分支（`git branch -a` 只有两个 `claude/*` 分支），线上 Render 服务实际跟踪、推送后会自动重新
+  构建部署的是 `claude/compensation-analysis-site-un8j4k`——本次会话四次推送到这个分支，日志里
+  都能看到对应的 `==> Running 'python -m uvicorn...'` 重启记录。之前几版 HANDOFF 里"push 到
+  main 才部署、还没合并到 main"的说法已经不准确，予以更正：**这个分支本身就是当前的部署分支**，
+  不需要等合并到某个不存在的 `main` 才生效。
 - SQLite 数据库文件挂载在 Render 的持久磁盘上（`/var/data/app.db`），`SECRET_KEY` 由 Render
   自动生成，`ADMIN_USERNAME`/`ADMIN_PASSWORD` 需要在 Render 后台手动配置（`sync: false`）。
 - 本地测试：`cd backend && python -m pytest tests/ -v`，测试全部用合成数据
-  （`tests/xlsx_fixtures.py` 现造的假工作簿），不含任何真实员工信息，可以放心提交到仓库。
+  （`tests/xlsx_fixtures.py` 现造的假工作簿），不含任何真实员工信息，可以放心提交到仓库。这个
+  沙盒环境连不上 Render 生产数据库/生产日志，只能靠用户提供真实文件或截图（比如 Render Logs
+  页面截图）来复现问题，见"已知的坑"第 4 条。
