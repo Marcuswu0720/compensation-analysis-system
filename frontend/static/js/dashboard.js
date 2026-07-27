@@ -1,7 +1,13 @@
 const fmtMoney = (n) => '₦' + Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 });
 const fmtInt = (n) => Number(n || 0).toLocaleString('en-NG');
-const SALARY_TYPE_LABEL = { base: '底薪批次', bonus: '奖金', backpay: '补发薪资' };
-const STATUS_LABEL = { pending_review: '待确认', confirmed: '已入库', rejected: '已放弃', superseded: '已被替换' };
+const fmtDateTime = (d) => new Date(d).toLocaleString(currentLang() === 'en' ? 'en-US' : 'zh-CN');
+const SALARY_TYPE_LABEL = () => ({ base: t('salary_type.base'), bonus: t('salary_type.bonus'), backpay: t('salary_type.backpay') });
+const STATUS_LABEL = () => ({
+  pending_review: t('upload.status.pending_review'),
+  confirmed: t('upload.status.confirmed'),
+  rejected: t('upload.status.rejected'),
+  superseded: t('upload.status.superseded'),
+});
 
 let currentBatchId = null;
 let trendChart = null;
@@ -13,10 +19,11 @@ async function initShell() {
   try {
     const me = await apiJson('/api/auth/me');
     currentUserRole = me.role;
-    document.getElementById('whoami').textContent = `${me.username}（${me.role === 'admin' ? '管理员' : '只读'}）`;
+    document.getElementById('whoami').textContent = `${me.username}（${me.role === 'admin' ? t('common.admin') : t('common.viewer')}）`;
   } catch (e) {
     return;
   }
+  mountLangSwitch(document.getElementById('langSwitchHost'));
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -60,31 +67,31 @@ function renderBatch(batch) {
   const card = document.getElementById('reviewCard');
   card.style.display = 'block';
   document.getElementById('reviewMonth').textContent = `${batch.month}（${batch.original_filename}）`;
-  document.getElementById('reviewSalaryType').textContent = SALARY_TYPE_LABEL[batch.salary_type] || batch.salary_type;
+  document.getElementById('reviewSalaryType').textContent = SALARY_TYPE_LABEL()[batch.salary_type] || batch.salary_type;
 
   const s = batch.summary;
   if (batch.salary_type === 'base') {
     const deltaText = s.headcount_delta === null || s.headcount_delta === undefined
-      ? '（无上月数据可比）'
+      ? t('upload.stat.no_prior_month')
       : (s.headcount_delta >= 0 ? `+${s.headcount_delta}` : s.headcount_delta);
     document.getElementById('reviewSummary').innerHTML = `
-      <div class="stat"><div class="label">本月总人数（现金流口径）</div><div class="value">${fmtInt(s.headcount_total)}</div></div>
-      <div class="stat"><div class="label">较上月净变化</div><div class="value">${deltaText}</div></div>
-      <div class="stat"><div class="label">总HR Cost</div><div class="value">${fmtMoney(s.total_hr_cost)}</div></div>
-      <div class="stat"><div class="label">本月内离职（仍在本月发薪）</div><div class="value">${fmtInt(s.headcount_resigned_this_month)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.headcount_total')}</div><div class="value">${fmtInt(s.headcount_total)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.headcount_delta')}</div><div class="value">${deltaText}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.total_hr_cost')}</div><div class="value">${fmtMoney(s.total_hr_cost)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.resigned_this_month')}</div><div class="value">${fmtInt(s.headcount_resigned_this_month)}</div></div>
     `;
   } else {
     document.getElementById('reviewSummary').innerHTML = `
-      <div class="stat"><div class="label">记录条数</div><div class="value">${fmtInt(s.row_count)}</div></div>
-      <div class="stat"><div class="label">能关联到底薪员工</div><div class="value">${fmtInt(s.matched_count)}</div></div>
-      <div class="stat"><div class="label">关联不到（仍计入总成本）</div><div class="value">${fmtInt(s.unmatched_count)}</div></div>
-      <div class="stat"><div class="label">总金额</div><div class="value">${fmtMoney(s.total_amount)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.row_count')}</div><div class="value">${fmtInt(s.row_count)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.matched_count')}</div><div class="value">${fmtInt(s.matched_count)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.unmatched_count')}</div><div class="value">${fmtInt(s.unmatched_count)}</div></div>
+      <div class="stat"><div class="label">${t('upload.stat.total_amount')}</div><div class="value">${fmtMoney(s.total_amount)}</div></div>
     `;
   }
 
   const issuesEl = document.getElementById('reviewIssues');
   if (batch.issues.length === 0) {
-    issuesEl.innerHTML = '<li style="background:rgba(30,158,99,0.12);border-color:rgba(30,158,99,0.3);">未发现异常，所有关键字段均成功映射</li>';
+    issuesEl.innerHTML = `<li style="background:rgba(30,158,99,0.12);border-color:rgba(30,158,99,0.3);">${t('upload.no_issues')}</li>`;
   } else {
     issuesEl.innerHTML = batch.issues
       .map((i) => `<li class="${issueSeverity(i)}"><strong>[${i.issue_type}]</strong> ${i.issue_detail}</li>`)
@@ -94,7 +101,7 @@ function renderBatch(batch) {
   const busy = batch.status !== 'pending_review';
   document.getElementById('confirmBtn').disabled = busy;
   document.getElementById('rejectBtn').disabled = busy;
-  document.getElementById('confirmBtn').textContent = batch.status === 'confirmed' ? '已入库' : '确认无误，正式入库';
+  document.getElementById('confirmBtn').textContent = batch.status === 'confirmed' ? t('upload.confirmed') : t('upload.confirm');
   document.getElementById('reconciliationExportBtn').style.display = batch.salary_type === 'base' ? '' : 'none';
 }
 
@@ -104,23 +111,25 @@ async function loadUploadHistory() {
   const list = await apiJson(`/api/upload${qs}`);
   const el = document.getElementById('uploadHistory');
   if (list.length === 0) {
-    el.innerHTML = '<div class="muted">暂无上传记录</div>';
+    el.innerHTML = `<div class="muted">${t('upload.no_history')}</div>`;
     return;
   }
   const isAdmin = currentUserRole === 'admin';
+  const salaryTypeLabel = SALARY_TYPE_LABEL();
+  const statusLabel = STATUS_LABEL();
   el.innerHTML = list
     .map(
       (b) => `
       <div class="upload-list-item">
-        <span>${b.month} · ${SALARY_TYPE_LABEL[b.salary_type] || b.salary_type} · ${b.original_filename} · 上传人 ${b.uploaded_by} · ${new Date(b.uploaded_at).toLocaleString('zh-CN')}</span>
+        <span>${b.month} · ${salaryTypeLabel[b.salary_type] || b.salary_type} · ${b.original_filename} · ${t('upload.uploaded_by')} ${b.uploaded_by} · ${fmtDateTime(b.uploaded_at)}</span>
         <span>
-          <span class="badge ${b.status}">${STATUS_LABEL[b.status] || b.status}</span>
+          <span class="badge ${b.status}">${statusLabel[b.status] || b.status}</span>
           ${isAdmin && b.status === 'pending_review' ? `
-            <button class="secondary" style="padding:2px 8px;font-size:12px;margin-left:6px;" onclick="reopenBatch(${b.id})">查看/处理</button>
+            <button class="secondary" style="padding:2px 8px;font-size:12px;margin-left:6px;" onclick="reopenBatch(${b.id})">${t('upload.action.view')}</button>
           ` : ''}
           ${isAdmin && b.status === 'confirmed' ? `
-            <button class="secondary" style="padding:2px 8px;font-size:12px;margin-left:6px;" onclick="reassignBatchMonth(${b.id}, '${b.month}')">改月份</button>
-            <button class="danger" style="padding:2px 8px;font-size:12px;margin-left:4px;" onclick="deleteBatch(${b.id}, '${b.month}')">删除</button>
+            <button class="secondary" style="padding:2px 8px;font-size:12px;margin-left:6px;" onclick="reassignBatchMonth(${b.id}, '${b.month}')">${t('upload.action.reassign_month')}</button>
+            <button class="danger" style="padding:2px 8px;font-size:12px;margin-left:4px;" onclick="deleteBatch(${b.id}, '${b.month}')">${t('upload.action.delete')}</button>
           ` : ''}
         </span>
       </div>`
@@ -134,12 +143,12 @@ async function reopenBatch(batchId) {
     renderBatch(batch);
     document.getElementById('reviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
-    alert('打开批次失败：' + e.message);
+    alert(t('upload.open_batch_failed') + e.message);
   }
 }
 
 async function reassignBatchMonth(batchId, currentMonth) {
-  const newMonth = prompt(`把这个批次的月份从 ${currentMonth} 改成（格式 YYYY-MM）：`, currentMonth);
+  const newMonth = prompt(t('upload.reassign_prompt', { month: currentMonth }), currentMonth);
   if (!newMonth || newMonth === currentMonth) return;
   try {
     await apiJson(`/api/upload/${batchId}/reassign-month`, {
@@ -150,18 +159,18 @@ async function reassignBatchMonth(batchId, currentMonth) {
     await loadUploadHistory();
     await populateMeta();
   } catch (e) {
-    alert('改月份失败：' + e.message);
+    alert(t('upload.reassign_failed') + e.message);
   }
 }
 
 async function deleteBatch(batchId, month) {
-  if (!confirm(`确定要删除 ${month} 的这个批次吗？这会把它写入的数据一并删掉，且不可恢复。`)) return;
+  if (!confirm(t('upload.delete_confirm', { month }))) return;
   try {
     await apiJson(`/api/upload/${batchId}`, { method: 'DELETE' });
     await loadUploadHistory();
     await populateMeta();
   } catch (e) {
-    alert('删除失败：' + e.message);
+    alert(t('upload.delete_failed') + e.message);
   }
 }
 
@@ -175,7 +184,7 @@ function initUploadTab() {
     const errEl = document.getElementById('uploadError');
     errEl.textContent = '';
     if (!month || !fileInput.files[0]) {
-      errEl.textContent = '请选择月份和文件';
+      errEl.textContent = t('upload.please_select');
       return;
     }
     const form = new FormData();
@@ -221,7 +230,7 @@ function initUploadTab() {
     const errEl = document.getElementById('reviewError');
     errEl.textContent = '';
     try {
-      await downloadBlob(`/api/upload/${currentBatchId}/reconciliation-export`, {}, '分部门核对.xlsx');
+      await downloadBlob(`/api/upload/${currentBatchId}/reconciliation-export`, {}, currentLang() === 'en' ? 'reconciliation.xlsx' : '分部门核对.xlsx');
     } catch (e) {
       errEl.textContent = e.message;
     }
@@ -239,7 +248,7 @@ async function populateMeta() {
   const fillSelect = (id, values, withEmpty) => {
     const el = document.getElementById(id);
     const current = el.value;
-    el.innerHTML = (withEmpty ? '<option value="">全部</option>' : '') + values.map((v) => `<option value="${v}">${v}</option>`).join('');
+    el.innerHTML = (withEmpty ? `<option value="">${t('common.all')}</option>` : '') + values.map((v) => `<option value="${v}">${v}</option>`).join('');
     if (values.includes(current)) el.value = current;
   };
   fillSelect('trendDept', meta.departments, true);
@@ -254,7 +263,7 @@ async function populateMeta() {
   const fillCategorySelect = (id) => {
     const el = document.getElementById(id);
     const current = el.value;
-    el.innerHTML = meta.categories.map((c) => `<option value="${c.value}">${c.label}</option>`).join('');
+    el.innerHTML = meta.categories.map((c) => `<option value="${c.value}">${categoryLabel(c)}</option>`).join('');
     if (meta.categories.some((c) => c.value === current)) el.value = current;
   };
   fillCategorySelect('catCompareCategory');
@@ -291,11 +300,11 @@ async function downloadBlob(path, fetchOptions, fallbackFilename) {
   const resp = await apiFetch(path, fetchOptions || {});
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
-    throw new Error(data.detail || `请求失败 (${resp.status})`);
+    throw new Error(data.detail || `Request failed (${resp.status})`);
   }
   const disposition = resp.headers.get('Content-Disposition') || '';
   const match = disposition.match(/filename\*=UTF-8''([^;]+)/);
-  const filename = match ? decodeURIComponent(match[1]) : fallbackFilename || '导出.xlsx';
+  const filename = match ? decodeURIComponent(match[1]) : fallbackFilename || (currentLang() === 'en' ? 'export.xlsx' : '导出.xlsx');
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -324,7 +333,7 @@ function initExportTab() {
     if (document.getElementById('exportTypeBonus').checked) salaryTypes.push('bonus');
     if (document.getElementById('exportTypeBackpay').checked) salaryTypes.push('backpay');
     if (salaryTypes.length === 0) {
-      errEl.textContent = '请至少勾选一个批次类型';
+      errEl.textContent = t('export.please_select_type');
       return;
     }
     const payload = {
@@ -335,7 +344,7 @@ function initExportTab() {
       salary_types: salaryTypes,
     };
     try {
-      await downloadPost('/api/export/detail', payload, '薪酬明细导出.xlsx');
+      await downloadPost('/api/export/detail', payload, currentLang() === 'en' ? 'salary_detail_export.xlsx' : '薪酬明细导出.xlsx');
     } catch (e) {
       errEl.textContent = e.message;
     }
@@ -355,14 +364,14 @@ function renderTrend(rows) {
     data: {
       labels,
       datasets: [
-        { label: '总HR Cost (₦)', data: costData, borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.15)', yAxisID: 'y', tension: 0.25 },
-        { label: '人数', data: headcountData, borderColor: '#1e9e63', backgroundColor: 'rgba(30,158,99,0.15)', yAxisID: 'y1', tension: 0.25 },
+        { label: t('trend.chart.hr_cost'), data: costData, borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.15)', yAxisID: 'y', tension: 0.25 },
+        { label: t('trend.chart.headcount'), data: headcountData, borderColor: '#1e9e63', backgroundColor: 'rgba(30,158,99,0.15)', yAxisID: 'y1', tension: 0.25 },
       ],
     },
     options: {
       scales: {
         y: { position: 'left', title: { display: true, text: 'HR Cost (₦)' } },
-        y1: { position: 'right', title: { display: true, text: '人数' }, grid: { drawOnChartArea: false } },
+        y1: { position: 'right', title: { display: true, text: t('trend.chart.headcount') }, grid: { drawOnChartArea: false } },
       },
     },
   });
@@ -405,7 +414,7 @@ function initTrendTab() {
         renderTrend(rows);
       } else {
         if (!start || !end || start >= end) {
-          errEl.textContent = '两点比较模式下，起始月份必须早于结束月份';
+          errEl.textContent = t('trend.compare_order_error');
           return;
         }
         const r = await apiPost('/api/attribution', { department, entity, prev_month: start, cur_month: end });
@@ -436,7 +445,7 @@ function renderCatTrendCategoryChecklist(categories) {
   const previouslyChecked = new Set(Array.from(container.querySelectorAll('input:checked')).map((cb) => cb.value));
   const isFirstRender = container.children.length === 0;
   container.innerHTML = categories
-    .map((c) => `<label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" value="${c.value}"> ${c.label}</label>`)
+    .map((c) => `<label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" value="${c.value}"> ${categoryLabel(c)}</label>`)
     .join('');
   container.querySelectorAll('input').forEach((cb, idx) => {
     cb.checked = isFirstRender ? idx < 2 : previouslyChecked.has(cb.value);
@@ -485,11 +494,11 @@ function updateCatTrendModeVisibility() {
 function catSeriesList(cache) {
   if (cache.employmentTypeMode === 'compare') {
     return [
-      { key: 'Formal', label: '正式工', rows: cache.data.Formal || [], dashed: false },
-      { key: 'Contract', label: '合同工', rows: cache.data.Contract || [], dashed: true },
+      { key: 'Formal', label: t('cat.employment_type.formal_short'), rows: cache.data.Formal || [], dashed: false },
+      { key: 'Contract', label: t('cat.employment_type.contract_short'), rows: cache.data.Contract || [], dashed: true },
     ];
   }
-  const label = cache.employmentTypeMode === 'Formal' ? '（仅正式工）' : cache.employmentTypeMode === 'Contract' ? '（仅合同工）' : '';
+  const label = cache.employmentTypeMode === 'Formal' ? t('cat.employment_type.formal_suffix') : cache.employmentTypeMode === 'Contract' ? t('cat.employment_type.contract_suffix') : '';
   return [{ key: 'all', label, rows: cache.data.all || [], dashed: false }];
 }
 
@@ -509,7 +518,7 @@ function pctChange(baseline, current) {
 
 function pctChangeLabel(baseline, current) {
   const { isNew, pct } = pctChange(baseline, current);
-  if (isNew) return '新增';
+  if (isNew) return t('cat.new');
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
 }
 
@@ -533,7 +542,7 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
       const baseline = raw.find((v) => v !== null) ?? 0;
       const plotData = view === 'pct' ? raw.map((v) => (v === null ? null : pctChange(baseline, v).pct)) : raw;
       datasets.push({
-        label: `${c.label}${s.label}`,
+        label: `${categoryLabel(c)}${s.label}`,
         data: plotData,
         borderColor: color,
         backgroundColor: color + '26',
@@ -552,7 +561,7 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
       const baseline = raw.find((v) => v !== null) ?? 0;
       const plotData = view === 'pct' ? raw.map((v) => (v === null ? null : pctChange(baseline, v).pct)) : raw;
       datasets.push({
-        label: `${c.label} 中位数`,
+        label: `${categoryLabel(c)} ${t('cat.median')}`,
         data: plotData,
         borderColor: color,
         backgroundColor: 'transparent',
@@ -567,18 +576,18 @@ function renderCatTrendChartAndTable(cache, categoryMeta) {
   catTrendChart = new Chart(document.getElementById('catTrendChart'), {
     type: 'line',
     data: { labels: months, datasets },
-    options: { scales: { y: { title: { display: true, text: view === 'pct' ? '相对起始月涨跌 (%)' : (perCapita ? '人均金额 (₦)' : '金额 (₦)') } } } },
+    options: { scales: { y: { title: { display: true, text: view === 'pct' ? t('cat.chart.pct_axis') : (perCapita ? t('cat.chart.per_capita_axis') : t('cat.chart.amount_axis')) } } } },
   });
 
-  const headCells = ['月份'];
-  series.forEach((s) => headCells.push(`人数${s.label}`));
+  const headCells = [t('cat.table.month')];
+  series.forEach((s) => headCells.push(`${t('cat.headcount_prefix')}${s.label}`));
   categoryMeta.forEach((c) => {
     series.forEach((s) => {
       if (perCapita) {
-        headCells.push(`${c.label}${s.label} 人均`);
-        if (showMedian) headCells.push(`${c.label}${s.label} 中位数`);
+        headCells.push(`${categoryLabel(c)}${s.label} ${t('cat.stat_basis.per_capita')}`);
+        if (showMedian) headCells.push(`${categoryLabel(c)}${s.label} ${t('cat.median')}`);
       } else {
-        headCells.push(`${c.label}${s.label}`);
+        headCells.push(`${categoryLabel(c)}${s.label}`);
       }
     });
   });
@@ -626,15 +635,15 @@ function renderCatCompareTable(cache, categoryMeta, startMonth, endMonth) {
 
   const headCells = perCapita
     ? showMedian
-      ? ['类目', '统计量', '起始月', '结束月', '差值', '涨跌幅']
-      : ['类目', '人均起始月 (₦)', '人均结束月 (₦)', '差值 (₦)', '涨跌幅']
-    : ['类目', '起始月金额 (₦)', '结束月金额 (₦)', '差值 (₦)', '涨跌幅'];
+      ? [t('cat.table.category'), t('cat.table.statistic'), t('cat.table.start_month'), t('cat.table.end_month'), t('cat.table.diff'), t('cat.table.pct_change')]
+      : [t('cat.table.category'), t('cat.table.per_capita_start'), t('cat.table.per_capita_end'), t('cat.table.diff_amount'), t('cat.table.pct_change')]
+    : [t('cat.table.category'), t('cat.table.start_month_amount'), t('cat.table.end_month_amount'), t('cat.table.diff_amount'), t('cat.table.pct_change')];
   document.getElementById('catCompareTwoPointHead').innerHTML = `<tr>${headCells.map((h) => `<th>${h}</th>`).join('')}</tr>`;
 
   const bodyRows = [];
   categoryMeta.forEach((c) => {
     if (!startRow || !endRow) {
-      bodyRows.push(`<tr><td>${c.label}</td><td colspan="${headCells.length - 1}" class="muted">起始月或结束月在所选范围内没有数据</td></tr>`);
+      bodyRows.push(`<tr><td>${categoryLabel(c)}</td><td colspan="${headCells.length - 1}" class="muted">${t('cat.no_data_in_range')}</td></tr>`);
       return;
     }
     if (perCapita) {
@@ -642,20 +651,20 @@ function renderCatCompareTable(cache, categoryMeta, startMonth, endMonth) {
       const meanEnd = statValue(endRow, c.value, 'per_capita');
       if (!showMedian) {
         bodyRows.push(
-          `<tr><td>${c.label}</td><td>${fmtMoney(meanStart)}</td><td>${fmtMoney(meanEnd)}</td><td>${fmtSignedMoney(meanEnd - meanStart)}</td><td>${pctChangeLabel(meanStart, meanEnd)}</td></tr>`
+          `<tr><td>${categoryLabel(c)}</td><td>${fmtMoney(meanStart)}</td><td>${fmtMoney(meanEnd)}</td><td>${fmtSignedMoney(meanEnd - meanStart)}</td><td>${pctChangeLabel(meanStart, meanEnd)}</td></tr>`
         );
         return;
       }
       const medStart = statValue(startRow, c.value, 'median');
       const medEnd = statValue(endRow, c.value, 'median');
       bodyRows.push(
-        `<tr><td rowspan="2">${c.label}</td><td>人均（均值）</td><td>${fmtMoney(meanStart)}</td><td>${fmtMoney(meanEnd)}</td><td>${fmtSignedMoney(meanEnd - meanStart)}</td><td>${pctChangeLabel(meanStart, meanEnd)}</td></tr>`
+        `<tr><td rowspan="2">${categoryLabel(c)}</td><td>${t('cat.per_capita_mean')}</td><td>${fmtMoney(meanStart)}</td><td>${fmtMoney(meanEnd)}</td><td>${fmtSignedMoney(meanEnd - meanStart)}</td><td>${pctChangeLabel(meanStart, meanEnd)}</td></tr>`
       );
-      bodyRows.push(`<tr><td>中位数</td><td>${fmtMoney(medStart)}</td><td>${fmtMoney(medEnd)}</td><td>${fmtSignedMoney(medEnd - medStart)}</td><td>${pctChangeLabel(medStart, medEnd)}</td></tr>`);
+      bodyRows.push(`<tr><td>${t('cat.median')}</td><td>${fmtMoney(medStart)}</td><td>${fmtMoney(medEnd)}</td><td>${fmtSignedMoney(medEnd - medStart)}</td><td>${pctChangeLabel(medStart, medEnd)}</td></tr>`);
     } else {
       const startVal = statValue(startRow, c.value, 'categories');
       const endVal = statValue(endRow, c.value, 'categories');
-      bodyRows.push(`<tr><td>${c.label}</td><td>${fmtMoney(startVal)}</td><td>${fmtMoney(endVal)}</td><td>${fmtSignedMoney(endVal - startVal)}</td><td>${pctChangeLabel(startVal, endVal)}</td></tr>`);
+      bodyRows.push(`<tr><td>${categoryLabel(c)}</td><td>${fmtMoney(startVal)}</td><td>${fmtMoney(endVal)}</td><td>${fmtSignedMoney(endVal - startVal)}</td><td>${pctChangeLabel(startVal, endVal)}</td></tr>`);
     }
   });
   document.querySelector('#catCompareTwoPointTable tbody').innerHTML = bodyRows.join('');
@@ -679,7 +688,7 @@ function renderCatCompareTree(cache, categoryMeta, startMonth, endMonth) {
   };
 
   const lineFor = (label, points) => {
-    if (!points) return `${label}：起始月或结束月在所选范围内没有数据（如果刚切换了筛选条件，请重新点击"查询"）`;
+    if (!points) return `${label}：${t('cat.no_data_in_range_retry')}`;
     const diff = points.end - points.start;
     return `${label}：${fmtMoney(points.start)} → ${fmtMoney(points.end)}（${fmtSignedMoney(diff)}，${pctChangeLabel(points.start, points.end)}）`;
   };
@@ -692,18 +701,18 @@ function renderCatCompareTree(cache, categoryMeta, startMonth, endMonth) {
         const contract = pointsFor(data.Contract, c.value, statKey);
         return `
         <div style="margin-bottom:10px;">
-          <strong>${c.label}：</strong>
-          <div>${lineFor('全部', all)}</div>
-          <div style="padding-left:16px;">├─ ${lineFor('正式工', formal)}</div>
-          <div style="padding-left:16px;">└─ ${lineFor('合同工', contract)}</div>
+          <strong>${categoryLabel(c)}：</strong>
+          <div>${lineFor(t('cat.employment_type.all'), all)}</div>
+          <div style="padding-left:16px;">├─ ${lineFor(t('cat.employment_type.formal_short'), formal)}</div>
+          <div style="padding-left:16px;">└─ ${lineFor(t('cat.employment_type.contract_short'), contract)}</div>
         </div>`;
       })
       .join('');
 
   document.getElementById('catCompareTreeView').innerHTML = perCapita
     ? showMedian
-      ? `<h4>人均（均值）</h4>${buildBlock('per_capita')}<h4 style="margin-top:16px;">人均（中位数）</h4>${buildBlock('median')}`
-      : `<h4>人均（均值）</h4>${buildBlock('per_capita')}`
+      ? `<h4>${t('cat.per_capita_mean')}</h4>${buildBlock('per_capita')}<h4 style="margin-top:16px;">${t('cat.per_capita_median')}</h4>${buildBlock('median')}`
+      : `<h4>${t('cat.per_capita_mean')}</h4>${buildBlock('per_capita')}`
     : buildBlock('categories');
 }
 
@@ -732,14 +741,14 @@ function initCategoryTab() {
     errEl.textContent = '';
     const categories = selectedCatTrendCategories();
     if (categories.length === 0) {
-      errEl.textContent = '请至少勾选一个薪资类目';
+      errEl.textContent = t('cat.please_select_category');
       return;
     }
     const start = document.getElementById('catTrendStart').value;
     const end = document.getElementById('catTrendEnd').value;
     const pageMode = currentCatTrendMode();
     if (pageMode === 'compare' && (!start || !end || start >= end)) {
-      errEl.textContent = '两点比较模式下，起始月份必须早于结束月份';
+      errEl.textContent = t('cat.compare_order_error');
       return;
     }
 
@@ -796,7 +805,7 @@ function initCategoryTab() {
     document.querySelector('#catCompareTable tbody').innerHTML = rows
       .map(
         (r) =>
-          `<tr><td>${r.department || '(未标注部门)'}</td><td>${fmtInt(r.headcount)}</td><td>${fmtMoney(r.total)}</td><td>${fmtMoney(r.avg)}</td><td>${r.pct_of_hr_cost.toFixed(1)}%</td></tr>`
+          `<tr><td>${r.department || t('common.none')}</td><td>${fmtInt(r.headcount)}</td><td>${fmtMoney(r.total)}</td><td>${fmtMoney(r.avg)}</td><td>${r.pct_of_hr_cost.toFixed(1)}%</td></tr>`
       )
       .join('');
   });
@@ -814,14 +823,14 @@ function initCategoryTab() {
 function renderComposition(r) {
   const el = document.getElementById('compResult');
   if (!r.categories.length || !r.hr_cost) {
-    el.innerHTML = '<div class="muted">没有查到数据</div>';
+    el.innerHTML = `<div class="muted">${t('common.no_data')}</div>`;
     return;
   }
   const rowsHtml = r.categories
     .map(
       (c) => `
       <tr>
-        <td>${c.label}</td>
+        <td>${categoryLabel(c)}</td>
         <td>${fmtMoney(c.total)}</td>
         <td style="width:40%;">
           <div style="background:var(--bg);border-radius:4px;overflow:hidden;height:14px;">
@@ -833,9 +842,9 @@ function renderComposition(r) {
     )
     .join('');
   el.innerHTML = `
-    <div class="stat" style="max-width:260px;margin-bottom:12px;"><div class="label">HR Cost 合计</div><div class="value">${fmtMoney(r.hr_cost)}</div></div>
+    <div class="stat" style="max-width:260px;margin-bottom:12px;"><div class="label">${t('cat.composition.total_hr_cost')}</div><div class="value">${fmtMoney(r.hr_cost)}</div></div>
     <table>
-      <thead><tr><th>类目</th><th>金额 (₦)</th><th>占比</th><th></th></tr></thead>
+      <thead><tr><th>${t('cat.composition.table.category')}</th><th>${t('cat.composition.table.amount')}</th><th>${t('cat.composition.table.pct')}</th><th></th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
   `;
@@ -846,14 +855,19 @@ const pctStr = (p) => (p === null || p === undefined ? '' : ` (${p.toFixed(1)}%)
 function flatItemLabel(item) {
   if (item.key !== 'headcount') return item.label;
   const net = (item.joiners_count || 0) - (item.leavers_count || 0);
-  const direction = net > 0 ? `净增${net}人` : net < 0 ? `净减${Math.abs(net)}人` : '净变化0人';
-  return `人数变化：${direction}（新入职${item.joiners_count}人+${fmtMoney(item.joiners_cost)}，离职${item.leavers_count}人-${fmtMoney(item.leavers_cost)}）`;
+  const direction = net > 0 ? t('attr.net_increase', { n: net }) : net < 0 ? t('attr.net_decrease', { n: Math.abs(net) }) : t('attr.net_unchanged');
+  return t('attr.headcount_change_prefix') + direction + t('attr.joiners_leavers', {
+    joiners: item.joiners_count,
+    joiners_cost: fmtMoney(item.joiners_cost),
+    leavers: item.leavers_count,
+    leavers_cost: fmtMoney(item.leavers_cost),
+  });
 }
 
 function renderAttribution(r) {
   const el = document.getElementById('attrResult');
   const movers = (list, sign) =>
-    list.map((m) => `<li>${m.name || '(未知)'}（${m.job_grade || '-'}）: ${sign}${fmtMoney(Math.abs(m.hr_cost))}</li>`).join('');
+    list.map((m) => `<li>${m.name || t('common.unknown')}（${m.job_grade || '-'}）: ${sign}${fmtMoney(Math.abs(m.hr_cost))}</li>`).join('');
 
   const items = r.flat_items || [];
   const flatRows = items
@@ -867,44 +881,44 @@ function renderAttribution(r) {
   const labelRows = (r.behavior_labels || [])
     .map(
       (l) =>
-        `<tr><td>${l.label}</td><td>正式工 ${l.count_formal} / 合同工 ${l.count_contract}</td><td>${l.amount >= 0 ? '+' : ''}${fmtMoney(l.amount)}${pctStr(l.pct_of_net_change)}</td></tr>`
+        `<tr><td>${l.label}</td><td>${t('attr.formal_contract_split', { formal: l.count_formal, contract: l.count_contract })}</td><td>${l.amount >= 0 ? '+' : ''}${fmtMoney(l.amount)}${pctStr(l.pct_of_net_change)}</td></tr>`
     )
     .join('');
 
   el.innerHTML = `
     <div class="summary-grid">
-      <div class="stat"><div class="label">${r.prev_month} 总成本</div><div class="value">${fmtMoney(r.prev_total)}</div></div>
-      <div class="stat"><div class="label">${r.cur_month} 总成本</div><div class="value">${fmtMoney(r.cur_total)}</div></div>
-      <div class="stat"><div class="label">净变化</div><div class="value">${r.net_change >= 0 ? '+' : ''}${fmtMoney(r.net_change)}</div></div>
-      <div class="stat"><div class="label">校验</div><div class="value">${r.reconciled ? '✓ 吻合' : '✗ 不吻合，需排查'}</div></div>
+      <div class="stat"><div class="label">${r.prev_month} ${t('attr.prev_total')}</div><div class="value">${fmtMoney(r.prev_total)}</div></div>
+      <div class="stat"><div class="label">${r.cur_month} ${t('attr.cur_total')}</div><div class="value">${fmtMoney(r.cur_total)}</div></div>
+      <div class="stat"><div class="label">${t('attr.net_change')}</div><div class="value">${r.net_change >= 0 ? '+' : ''}${fmtMoney(r.net_change)}</div></div>
+      <div class="stat"><div class="label">${t('attr.reconciled')}</div><div class="value">${r.reconciled ? t('attr.reconciled.ok') : t('attr.reconciled.fail')}</div></div>
     </div>
 
-    <h4 style="margin-top:16px;">归因拆解（按贡献金额绝对值从大到小排序）</h4>
+    <h4 style="margin-top:16px;">${t('attr.breakdown_title')}</h4>
     <table>
-      <thead><tr><th>#</th><th>归因项</th><th>金额</th><th>占净变化</th></tr></thead>
+      <thead><tr><th>${t('attr.table.idx')}</th><th>${t('attr.table.item')}</th><th>${t('attr.table.amount')}</th><th>${t('attr.table.pct_of_net')}</th></tr></thead>
       <tbody>${flatRows}</tbody>
     </table>
-    <div class="muted" style="margin-top:6px;">校验：以上${items.length}项相加 = ${fmtMoney(itemsSum)}（${r.reconciled ? '✓ 与净变化吻合' : '✗ 与净变化不吻合，需排查'}）</div>
+    <div class="muted" style="margin-top:6px;">${t('attr.reconcile_note_prefix')}${items.length}${t('attr.reconcile_note_sum')}${fmtMoney(itemsSum)}${r.reconciled ? t('attr.reconcile_note_ok') : t('attr.reconcile_note_fail')}</div>
 
     ${r.anomalies && r.anomalies.length ? `<ul class="issue-list severe" style="margin-top:12px;">${r.anomalies.map((a) => `<li>⚠️ ${a}</li>`).join('')}</ul>` : ''}
 
-    <h4 style="margin-top:20px;">按变动性质分类的补充说明（一人可能同时命中多个标签，人数/金额不能跨行相加；以上面的归因拆解为准，这里仅作叙事参考）</h4>
+    <h4 style="margin-top:20px;">${t('attr.behavior_title')}</h4>
     <table>
-      <thead><tr><th>标签</th><th>人数</th><th>涉及成本</th></tr></thead>
+      <thead><tr><th>${t('attr.table.label')}</th><th>${t('attr.table.headcount')}</th><th>${t('attr.table.cost')}</th></tr></thead>
       <tbody>${labelRows}</tbody>
     </table>
 
     <div class="row" style="margin-top:12px;">
       <div>
-        <strong>成本涨幅最大：</strong>
+        <strong>${t('attr.top_increases')}</strong>
         <ul>${movers(r.top_increases, '+')}</ul>
       </div>
       <div>
-        <strong>成本降幅最大：</strong>
+        <strong>${t('attr.top_decreases')}</strong>
         <ul>${movers(r.top_decreases, '-')}</ul>
       </div>
     </div>
-    ${Object.keys(r.leaver_reasons || {}).length ? `<div><strong>离职原因分布：</strong> ${Object.entries(r.leaver_reasons).map(([k, v]) => `${k} × ${v}`).join('，')}</div>` : ''}
+    ${Object.keys(r.leaver_reasons || {}).length ? `<div><strong>${t('attr.leaver_reasons')}</strong> ${Object.entries(r.leaver_reasons).map(([k, v]) => `${k} × ${v}`).join('，')}</div>` : ''}
   `;
 }
 
@@ -926,12 +940,12 @@ function initChatTab() {
     if (!question) return;
     appendChatMsg('user', question);
     input.value = '';
-    const thinking = appendChatMsg('assistant', '思考中…');
+    const thinking = appendChatMsg('assistant', t('chat.thinking'));
     try {
       const resp = await apiPost('/api/chat', { question });
       thinking.textContent = resp.answer;
     } catch (e) {
-      thinking.textContent = '出错了: ' + e.message;
+      thinking.textContent = t('chat.error') + e.message;
     }
   };
   document.getElementById('chatSendBtn').addEventListener('click', send);
@@ -958,11 +972,11 @@ async function loadUserList() {
       (u) => `
       <tr>
         <td>${u.username}</td>
-        <td>${u.role === 'admin' ? '管理员' : '只读'}</td>
-        <td><span class="badge ${u.is_active ? 'confirmed' : 'rejected'}">${u.is_active ? '启用' : '已禁用'}</span></td>
+        <td>${u.role === 'admin' ? t('common.admin') : t('common.viewer')}</td>
+        <td><span class="badge ${u.is_active ? 'confirmed' : 'rejected'}">${u.is_active ? t('perm.status.active') : t('perm.status.disabled')}</span></td>
         <td>
-          <button class="secondary" style="padding:2px 8px;font-size:12px;" onclick="resetUserPassword(${u.id}, '${u.username}')">重置密码</button>
-          <button class="${u.is_active ? 'danger' : 'secondary'}" style="padding:2px 8px;font-size:12px;margin-left:4px;" onclick="toggleUserActive(${u.id}, ${!u.is_active}, '${u.username}')">${u.is_active ? '禁用' : '启用'}</button>
+          <button class="secondary" style="padding:2px 8px;font-size:12px;" onclick="resetUserPassword(${u.id}, '${u.username}')">${t('perm.action.reset_password')}</button>
+          <button class="${u.is_active ? 'danger' : 'secondary'}" style="padding:2px 8px;font-size:12px;margin-left:4px;" onclick="toggleUserActive(${u.id}, ${!u.is_active}, '${u.username}')">${u.is_active ? t('perm.action.disable') : t('perm.action.enable')}</button>
         </td>
       </tr>`
     )
@@ -971,23 +985,23 @@ async function loadUserList() {
 }
 
 async function resetUserPassword(userId, username) {
-  const newPassword = prompt(`为账号「${username}」设置新密码：`);
+  const newPassword = prompt(t('perm.reset_password_prompt', { username }));
   if (!newPassword) return;
   try {
     await apiPost(`/api/auth/users/${userId}/reset-password`, { new_password: newPassword });
-    alert('密码已重置');
+    alert(t('perm.reset_password_done'));
   } catch (e) {
-    alert('重置失败：' + e.message);
+    alert(t('perm.reset_password_failed') + e.message);
   }
 }
 
 async function toggleUserActive(userId, nextActive, username) {
-  if (!nextActive && !confirm(`确定要禁用账号「${username}」吗？禁用后该账号无法登录（历史记录会保留）。`)) return;
+  if (!nextActive && !confirm(t('perm.disable_confirm', { username }))) return;
   try {
     await apiPost(`/api/auth/users/${userId}/active`, { is_active: nextActive });
     await loadUserList();
   } catch (e) {
-    alert('操作失败：' + e.message);
+    alert(t('perm.action_failed') + e.message);
   }
 }
 
@@ -1000,7 +1014,7 @@ function renderPermScopeChecklist() {
   const entities = Object.keys(entityDepartmentMap);
   const container = document.getElementById('permScopeChecklist');
   if (entities.length === 0) {
-    container.innerHTML = '<div class="muted">还没有任何已入库的部门/实体数据，先上传并确认一个月份的数据再来分配权限。</div>';
+    container.innerHTML = `<div class="muted">${t('perm.no_scope_data')}</div>`;
     return;
   }
   container.innerHTML = entities
@@ -1008,7 +1022,7 @@ function renderPermScopeChecklist() {
       const depts = entityDepartmentMap[entity] || [];
       return `
       <div class="scope-entity-block">
-        <label><input type="checkbox" class="entity-check" data-entity="${entity}"> 整个实体：${entity}</label>
+        <label><input type="checkbox" class="entity-check" data-entity="${entity}"> ${t('perm.whole_entity_prefix')}${entity}</label>
         <div class="scope-dept-list">
           ${depts
             .map((d) => `<label class="dept-label" data-entity="${entity}"><input type="checkbox" class="dept-check" data-entity="${entity}" data-dept="${d}"> ${d}</label>`)
@@ -1038,7 +1052,7 @@ async function loadCurrentPermissions() {
   }
   const includeRevoked = document.getElementById('permShowRevoked').checked;
   const grants = await apiJson(`/api/auth/users/${userId}/permissions?include_revoked=${includeRevoked}`);
-  const typeLabel = { entity: '整体实体', entity_department: '实体+部门' };
+  const typeLabel = { entity: t('perm.type.entity'), entity_department: t('perm.type.entity_department') };
   document.getElementById('permCurrentList').innerHTML = grants.length
     ? grants
         .map(
@@ -1046,54 +1060,55 @@ async function loadCurrentPermissions() {
       <tr${g.is_active ? '' : ' style="opacity:0.55;"'}>
         <td>${typeLabel[g.scope_type] || g.scope_type}</td>
         <td>${g.entity}</td>
-        <td>${g.department1 || '<span class="muted">（全部）</span>'}</td>
-        <td>${g.is_active ? '<span class="badge confirmed">生效中</span>' : '<span class="badge rejected">已撤销</span>'}</td>
+        <td>${g.department1 || `<span class="muted">（${t('common.all')}）</span>`}</td>
+        <td>${g.is_active ? `<span class="badge confirmed">${t('perm.status.effective')}</span>` : `<span class="badge rejected">${t('perm.status.revoked')}</span>`}</td>
         <td class="muted" style="font-size:12px;">
-          ${g.granted_by || '-'} · ${new Date(g.granted_time).toLocaleString('zh-CN')}
-          ${g.revoked_by ? `<br>撤销：${g.revoked_by} · ${new Date(g.revoked_time).toLocaleString('zh-CN')}` : ''}
+          ${g.granted_by || '-'} · ${fmtDateTime(g.granted_time)}
+          ${g.revoked_by ? `<br>${t('perm.revoked_prefix')}${g.revoked_by} · ${fmtDateTime(g.revoked_time)}` : ''}
         </td>
-        <td>${g.is_active ? `<button class="danger" style="padding:2px 8px;font-size:12px;" onclick="revokePermission(${userId}, ${g.id})">撤销</button>` : ''}</td>
+        <td>${g.is_active ? `<button class="danger" style="padding:2px 8px;font-size:12px;" onclick="revokePermission(${userId}, ${g.id})">${t('perm.action.revoke')}</button>` : ''}</td>
       </tr>`
         )
         .join('')
-    : '<tr><td colspan="6" class="muted">暂无授权（该账号目前看不到任何数据）</td></tr>';
+    : `<tr><td colspan="6" class="muted">${t('perm.no_grants')}</td></tr>`;
 }
 
 async function revokePermission(userId, grantId) {
-  if (!confirm('确定要撤销这条授权规则吗？')) return;
+  if (!confirm(t('perm.revoke_confirm'))) return;
   await apiFetch(`/api/auth/users/${userId}/permissions/${grantId}`, { method: 'DELETE' });
   await loadCurrentPermissions();
 }
 
 async function loadOperationLog() {
   const logs = await apiJson('/api/auth/operation-log');
-  const typeLabel = { upload: '上传', correct: '修正', delete: '删除' };
+  const typeLabel = { upload: t('perm.oplog.upload'), correct: t('perm.oplog.correct'), delete: t('perm.oplog.delete') };
   document.getElementById('opLogList').innerHTML = logs.length
     ? logs
         .map(
           (l) => `
       <div class="upload-list-item">
-        <span>${new Date(l.operation_time).toLocaleString('zh-CN')} · ${l.operator} · ${typeLabel[l.operation_type] || l.operation_type}${l.target_month ? ' · ' + l.target_month : ''}</span>
+        <span>${fmtDateTime(l.operation_time)} · ${l.operator} · ${typeLabel[l.operation_type] || l.operation_type}${l.target_month ? ' · ' + l.target_month : ''}</span>
         <span class="muted">${l.detail || ''}</span>
       </div>`
         )
         .join('')
-    : '<div class="muted">暂无操作记录</div>';
+    : `<div class="muted">${t('perm.oplog.none')}</div>`;
 }
 
 async function loadDownloadLog() {
   const logs = await apiJson('/api/auth/download-log');
+  const salaryTypeLabel = SALARY_TYPE_LABEL();
   document.getElementById('downloadLogList').innerHTML = logs.length
     ? logs
         .map(
           (l) => `
       <div class="upload-list-item">
-        <span>${new Date(l.download_time).toLocaleString('zh-CN')} · ${l.username} · ${l.entity_scope || '-'} / ${l.department_scope || '-'} · ${l.month_range_start} 至 ${l.month_range_end}${l.salary_types ? ' · ' + l.salary_types.split(',').map((t) => SALARY_TYPE_LABEL[t] || t).join('+') : ''}</span>
-        <span class="muted">${fmtInt(l.row_count)} 条记录</span>
+        <span>${fmtDateTime(l.download_time)} · ${l.username} · ${l.entity_scope || '-'} / ${l.department_scope || '-'} · ${l.month_range_start} – ${l.month_range_end}${l.salary_types ? ' · ' + l.salary_types.split(',').map((st) => salaryTypeLabel[st] || st).join('+') : ''}</span>
+        <span class="muted">${fmtInt(l.row_count)}${t('perm.downloadlog.row_count_suffix')}</span>
       </div>`
         )
         .join('')
-    : '<div class="muted">暂无下载记录</div>';
+    : `<div class="muted">${t('perm.downloadlog.none')}</div>`;
 }
 
 function initPermissionsTab() {
@@ -1135,7 +1150,7 @@ function initPermissionsTab() {
     });
 
     if (grants.length === 0) {
-      errEl.textContent = '请至少勾选一个实体或部门';
+      errEl.textContent = t('perm.please_select_scope');
       return;
     }
 
@@ -1150,7 +1165,7 @@ function initPermissionsTab() {
       });
       await loadCurrentPermissions();
     } catch (e) {
-      errEl.textContent = '授权失败：' + e.message;
+      errEl.textContent = t('perm.grant_failed') + e.message;
     }
   });
 

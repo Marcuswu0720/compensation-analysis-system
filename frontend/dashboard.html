@@ -1,23 +1,24 @@
-<title>薪酬人力成本分析工具</title>
+<title data-i18n="app.title.short">薪酬人力成本分析工具</title>
 <link rel="stylesheet" href="/static/css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 
 <div class="app-shell">
   <div class="topbar">
-    <h1>尼日利亚薪酬人力成本分析工具</h1>
+    <h1 data-i18n="app.title">尼日利亚薪酬人力成本分析工具</h1>
     <div class="who">
       <span id="whoami"></span>
-      <button class="secondary" id="logoutBtn" style="margin-left:10px;">退出登录</button>
+      <span id="langSwitchHost"></span>
+      <button class="secondary" id="logoutBtn" data-i18n="common.logout">退出登录</button>
     </div>
   </div>
 
   <div class="tabs">
-    <button class="tab-btn active admin-only" data-tab="upload">上传数据</button>
-    <button class="tab-btn" data-tab="trend">趋势查询</button>
-    <button class="tab-btn" data-tab="categories">薪资类目</button>
-    <button class="tab-btn" data-tab="export">下载明细</button>
-    <button class="tab-btn" data-tab="chat">问答</button>
-    <button class="tab-btn admin-only" data-tab="permissions" style="display:none;">用户权限</button>
+    <button class="tab-btn active admin-only" data-tab="upload" data-i18n="nav.upload">上传数据</button>
+    <button class="tab-btn" data-tab="trend" data-i18n="nav.trend">趋势查询</button>
+    <button class="tab-btn" data-tab="categories" data-i18n="nav.categories">薪资类目</button>
+    <button class="tab-btn" data-tab="export" data-i18n="nav.export">下载明细</button>
+    <button class="tab-btn" data-tab="chat" data-i18n="nav.chat">问答</button>
+    <button class="tab-btn admin-only" data-tab="permissions" style="display:none;" data-i18n="nav.permissions">用户权限</button>
   </div>
 
   <!-- 上传 -->
@@ -25,55 +26,55 @@
     <div class="card">
       <div class="row">
         <div>
-          <label>数据月份</label>
+          <label data-i18n="upload.month">数据月份</label>
           <input type="month" id="uploadMonth">
         </div>
         <div>
-          <label>薪酬类型</label>
+          <label data-i18n="upload.salary_type">薪酬类型</label>
           <select id="uploadSalaryType">
-            <option value="base">底薪批次（完整月度发薪表）</option>
-            <option value="bonus">奖金（单独的奖金文件）</option>
-            <option value="backpay">补发薪资（加班费补发等一次性文件）</option>
+            <option value="base" data-i18n="upload.salary_type.base">底薪批次（完整月度发薪表）</option>
+            <option value="bonus" data-i18n="upload.salary_type.bonus">奖金（单独的奖金文件）</option>
+            <option value="backpay" data-i18n="upload.salary_type.backpay">补发薪资（加班费补发等一次性文件）</option>
           </select>
         </div>
         <div style="flex:2;">
-          <label>原始发薪表 Excel</label>
+          <label data-i18n="upload.file">原始发薪表 Excel</label>
           <input type="file" id="uploadFile" accept=".xlsx">
         </div>
         <div style="flex:0;">
-          <button id="uploadBtn">上传并校验</button>
+          <button id="uploadBtn" data-i18n="upload.submit">上传并校验</button>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px;">同一个月份可以分别上传"底薪批次/奖金/补发薪资"三种类型，三者的成本会自动加总；同一类型再次上传会替换掉该类型之前的数据，不影响其他类型。</div>
+      <div class="muted" style="margin-top:8px;" data-i18n="upload.hint">同一个月份可以分别上传"底薪批次/奖金/补发薪资"三种类型，三者的成本会自动加总；同一类型再次上传会替换掉该类型之前的数据，不影响其他类型。</div>
       <div class="error" id="uploadError"></div>
     </div>
 
     <div class="card" id="reviewCard" style="display:none; margin-top:16px;">
-      <h3>校验摘要 - <span id="reviewMonth"></span> <span class="badge" id="reviewSalaryType" style="background:rgba(47,111,237,0.15);color:#2f6fed;"></span></h3>
+      <h3><span data-i18n="upload.review_title">校验摘要</span> - <span id="reviewMonth"></span> <span class="badge" id="reviewSalaryType" style="background:rgba(47,111,237,0.15);color:#2f6fed;"></span></h3>
       <div class="summary-grid" id="reviewSummary"></div>
       <div id="reviewIssuesWrap">
-        <strong>需要注意的问题：</strong>
+        <strong data-i18n="upload.review.problems">需要注意的问题：</strong>
         <ul class="issue-list" id="reviewIssues"></ul>
       </div>
       <div class="row">
-        <button id="confirmBtn">确认无误，正式入库</button>
-        <button class="secondary" id="rejectBtn">数据有问题，放弃本次上传</button>
-        <button class="secondary" id="reconciliationExportBtn" style="display:none;">下载核对用Excel（分部门×分薪资类目）</button>
+        <button id="confirmBtn" data-i18n="upload.confirm">确认无误，正式入库</button>
+        <button class="secondary" id="rejectBtn" data-i18n="upload.reject">数据有问题，放弃本次上传</button>
+        <button class="secondary" id="reconciliationExportBtn" style="display:none;" data-i18n="upload.reconciliation_export">下载核对用Excel（分部门×分薪资类目）</button>
       </div>
       <div class="error" id="reviewError"></div>
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>历史上传记录（全部批次）</h3>
+      <h3 data-i18n="upload.history_title">历史上传记录（全部批次）</h3>
       <div class="row" style="align-items:center;">
         <div>
-          <label>按状态筛选</label>
+          <label data-i18n="upload.filter_by_status">按状态筛选</label>
           <select id="historyStatusFilter">
-            <option value="">全部</option>
-            <option value="pending_review">待确认</option>
-            <option value="confirmed">已入库</option>
-            <option value="rejected">已放弃</option>
-            <option value="superseded">已被替换</option>
+            <option value="" data-i18n="common.all">全部</option>
+            <option value="pending_review" data-i18n="upload.status.pending_review">待确认</option>
+            <option value="confirmed" data-i18n="upload.status.confirmed">已入库</option>
+            <option value="rejected" data-i18n="upload.status.rejected">已放弃</option>
+            <option value="superseded" data-i18n="upload.status.superseded">已被替换</option>
           </select>
         </div>
       </div>
@@ -86,31 +87,31 @@
     <div class="card">
       <div class="row">
         <div>
-          <label>部门（不选=全公司）</label>
-          <select id="trendDept"><option value="">全部</option></select>
+          <label data-i18n="trend.dept">部门（不选=全公司）</label>
+          <select id="trendDept"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>实体（不选=全部）</label>
-          <select id="trendEntity"><option value="">全部</option></select>
+          <label data-i18n="trend.entity">实体（不选=全部）</label>
+          <select id="trendEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>起始月份</label>
+          <label data-i18n="trend.start_month">起始月份</label>
           <select id="trendStart"></select>
         </div>
         <div>
-          <label>结束月份</label>
+          <label data-i18n="trend.end_month">结束月份</label>
           <select id="trendEnd"></select>
         </div>
         <div style="flex:0;">
-          <button id="trendQueryBtn">查询</button>
+          <button id="trendQueryBtn" data-i18n="common.query">查询</button>
         </div>
       </div>
       <div class="row" style="margin-top:8px;">
         <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-          <input type="radio" name="trendMode" id="trendModeTrend" value="trend" checked> 趋势模式（起始月到结束月之间所有月份的连续折线图）
+          <input type="radio" name="trendMode" id="trendModeTrend" value="trend" checked> <span data-i18n="trend.mode.trend">趋势模式（起始月到结束月之间所有月份的连续折线图）</span>
         </label>
         <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:16px;">
-          <input type="radio" name="trendMode" id="trendModeCompare" value="compare"> 两点比较模式（只看起始月和结束月，不要求相邻，展示完整归因拆解）
+          <input type="radio" name="trendMode" id="trendModeCompare" value="compare"> <span data-i18n="trend.mode.compare">两点比较模式（只看起始月和结束月，不要求相邻，展示完整归因拆解）</span>
         </label>
       </div>
       <div class="error" id="trendError"></div>
@@ -119,13 +120,13 @@
     <div class="card" style="margin-top:16px;" id="trendTrendResult">
       <canvas id="trendChart" height="90"></canvas>
       <table id="trendTable">
-        <thead><tr><th>月份</th><th>在职人数（含当月内离职）</th><th>总HR Cost (₦)</th><th>人均HR Cost (₦)</th></tr></thead>
+        <thead><tr><th data-i18n="trend.table.month">月份</th><th data-i18n="trend.table.headcount">在职人数（含当月内离职）</th><th data-i18n="trend.table.total_hr_cost">总HR Cost (₦)</th><th data-i18n="trend.table.avg_hr_cost">人均HR Cost (₦)</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
 
     <div class="card" style="margin-top:16px;display:none;" id="trendCompareResult">
-      <h3>两点比较 — 归因拆解</h3>
+      <h3 data-i18n="trend.compare_title">两点比较 — 归因拆解</h3>
       <div id="attrResult"></div>
     </div>
   </div>
@@ -133,73 +134,73 @@
   <!-- 薪资类目 -->
   <div class="tab-panel" id="tab-categories">
     <div class="card">
-      <h3>类目趋势 / 两点比较</h3>
+      <h3 data-i18n="cat.title">类目趋势 / 两点比较</h3>
       <div class="row">
         <div style="flex:3;">
-          <label>薪资类目（可多选）</label>
+          <label data-i18n="cat.categories">薪资类目（可多选）</label>
           <div id="catTrendCategoryChecklist" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;"></div>
         </div>
       </div>
       <div class="row" style="margin-top:8px;">
         <div>
-          <label>部门（不选=全公司）</label>
-          <select id="catTrendDept"><option value="">全部</option></select>
+          <label data-i18n="trend.dept">部门（不选=全公司）</label>
+          <select id="catTrendDept"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>实体（不选=全部）</label>
-          <select id="catTrendEntity"><option value="">全部</option></select>
+          <label data-i18n="trend.entity">实体（不选=全部）</label>
+          <select id="catTrendEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>起始月份</label>
+          <label data-i18n="trend.start_month">起始月份</label>
           <select id="catTrendStart"></select>
         </div>
         <div>
-          <label>结束月份</label>
+          <label data-i18n="trend.end_month">结束月份</label>
           <select id="catTrendEnd"></select>
         </div>
         <div>
-          <label>用工类型</label>
+          <label data-i18n="cat.employment_type">用工类型</label>
           <select id="catTrendEmploymentType">
-            <option value="all">全部</option>
-            <option value="Formal">仅正式工</option>
-            <option value="Contract">仅合同工</option>
-            <option value="compare">正式工 vs 合同工</option>
+            <option value="all" data-i18n="cat.employment_type.all">全部</option>
+            <option value="Formal" data-i18n="cat.employment_type.formal">仅正式工</option>
+            <option value="Contract" data-i18n="cat.employment_type.contract">仅合同工</option>
+            <option value="compare" data-i18n="cat.employment_type.compare">正式工 vs 合同工</option>
           </select>
         </div>
         <div style="flex:0;">
-          <button id="catTrendQueryBtn">查询</button>
+          <button id="catTrendQueryBtn" data-i18n="common.query">查询</button>
         </div>
       </div>
       <div class="row" style="margin-top:8px;">
         <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-          <input type="radio" name="catTrendMode" id="catTrendModeTrend" value="trend" checked> 趋势模式
+          <input type="radio" name="catTrendMode" id="catTrendModeTrend" value="trend" checked> <span data-i18n="cat.mode.trend">趋势模式</span>
         </label>
         <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:16px;">
-          <input type="radio" name="catTrendMode" id="catTrendModeCompare" value="compare"> 两点比较模式
+          <input type="radio" name="catTrendMode" id="catTrendModeCompare" value="compare"> <span data-i18n="cat.mode.compare">两点比较模式</span>
         </label>
         <span style="margin-left:24px;">
-          统计口径：
+          <span data-i18n="cat.stat_basis">统计口径：</span>
           <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-            <input type="radio" name="catStatBasis" id="catStatBasisTotal" value="total" checked> 总额
+            <input type="radio" name="catStatBasis" id="catStatBasisTotal" value="total" checked> <span data-i18n="cat.stat_basis.total">总额</span>
           </label>
           <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:8px;">
-            <input type="radio" name="catStatBasis" id="catStatBasisPerCapita" value="per_capita"> 人均
+            <input type="radio" name="catStatBasis" id="catStatBasisPerCapita" value="per_capita"> <span data-i18n="cat.stat_basis.per_capita">人均</span>
           </label>
           <label id="catShowMedianWrap" style="font-weight:normal;display:none;align-items:center;gap:4px;margin-left:8px;">
-            <input type="checkbox" id="catShowMedian"> 同时显示中位数
+            <input type="checkbox" id="catShowMedian"> <span data-i18n="cat.show_median">同时显示中位数</span>
           </label>
         </span>
         <span id="catTrendViewToggleWrap" style="margin-left:24px;">
-          视图：
+          <span data-i18n="cat.view">视图：</span>
           <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
-            <input type="radio" name="catTrendView" id="catTrendViewAbs" value="absolute" checked> 绝对金额
+            <input type="radio" name="catTrendView" id="catTrendViewAbs" value="absolute" checked> <span data-i18n="cat.view.absolute">绝对金额</span>
           </label>
           <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;margin-left:8px;">
-            <input type="radio" name="catTrendView" id="catTrendViewPct" value="pct"> 增长百分比（以起始月为基准）
+            <input type="radio" name="catTrendView" id="catTrendViewPct" value="pct"> <span data-i18n="cat.view.pct">增长百分比（以起始月为基准）</span>
           </label>
         </span>
       </div>
-      <div class="muted" id="catTrendLineCountHint" style="display:none;margin-top:6px;">
+      <div class="muted" id="catTrendLineCountHint" style="display:none;margin-top:6px;" data-i18n="cat.line_count_hint">
         当前展示的线条较多，建议减少类目选择以提升可读性。
       </div>
       <div class="error" id="catTrendError"></div>
@@ -221,47 +222,47 @@
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>部门间横向对比</h3>
+      <h3 data-i18n="cat.compare_title">部门间横向对比</h3>
       <div class="row">
         <div>
-          <label>薪资类目</label>
+          <label data-i18n="cat.category_label">薪资类目</label>
           <select id="catCompareCategory"></select>
         </div>
         <div>
-          <label>月份</label>
+          <label data-i18n="cat.month">月份</label>
           <select id="catCompareMonth"></select>
         </div>
         <div>
-          <label>实体（不选=全部）</label>
-          <select id="catCompareEntity"><option value="">全部</option></select>
+          <label data-i18n="trend.entity">实体（不选=全部）</label>
+          <select id="catCompareEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div style="flex:0;">
-          <button id="catCompareQueryBtn">查询</button>
+          <button id="catCompareQueryBtn" data-i18n="common.query">查询</button>
         </div>
       </div>
       <table id="catCompareTable" style="margin-top:16px;">
-        <thead><tr><th>部门</th><th>人数</th><th>类目总额 (₦)</th><th>人均 (₦)</th><th>占该部门HR Cost比例</th></tr></thead>
+        <thead><tr><th data-i18n="cat.compare.table.department">部门</th><th data-i18n="cat.compare.table.headcount">人数</th><th data-i18n="cat.compare.table.category_total">类目总额 (₦)</th><th data-i18n="cat.compare.table.per_capita">人均 (₦)</th><th data-i18n="cat.compare.table.pct_of_hr_cost">占该部门HR Cost比例</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>成本构成占比</h3>
+      <h3 data-i18n="cat.composition_title">成本构成占比</h3>
       <div class="row">
         <div>
-          <label>月份</label>
+          <label data-i18n="cat.month">月份</label>
           <select id="compMonth"></select>
         </div>
         <div>
-          <label>部门（不选=全公司）</label>
-          <select id="compDept"><option value="">全部</option></select>
+          <label data-i18n="trend.dept">部门（不选=全公司）</label>
+          <select id="compDept"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>实体（不选=全部）</label>
-          <select id="compEntity"><option value="">全部</option></select>
+          <label data-i18n="trend.entity">实体（不选=全部）</label>
+          <select id="compEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div style="flex:0;">
-          <button id="compQueryBtn">查询</button>
+          <button id="compQueryBtn" data-i18n="common.query">查询</button>
         </div>
       </div>
       <div id="compResult" style="margin-top:16px;"></div>
@@ -271,43 +272,43 @@
   <!-- 下载明细 -->
   <div class="tab-panel" id="tab-export">
     <div class="card">
-      <h3>员工级薪酬明细导出</h3>
+      <h3 data-i18n="export.title">员工级薪酬明细导出</h3>
       <div class="row">
         <div>
-          <label>部门（不选=你有权限的全部部门）</label>
-          <select id="exportDept"><option value="">全部</option></select>
+          <label data-i18n="export.dept">部门（不选=你有权限的全部部门）</label>
+          <select id="exportDept"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>实体（不选=你有权限的全部实体）</label>
-          <select id="exportEntity"><option value="">全部</option></select>
+          <label data-i18n="export.entity">实体（不选=你有权限的全部实体）</label>
+          <select id="exportEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
-          <label>起始月份</label>
+          <label data-i18n="export.start_month">起始月份</label>
           <select id="exportStart"></select>
         </div>
         <div>
-          <label>结束月份</label>
+          <label data-i18n="export.end_month">结束月份</label>
           <select id="exportEnd"></select>
         </div>
       </div>
       <div class="row" style="margin-top:10px;align-items:center;">
         <div style="flex:0;">
-          <label>批次类型（不选=全部）</label>
+          <label data-i18n="export.batch_type">批次类型（不选=全部）</label>
           <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal;margin-right:12px;">
-            <input type="checkbox" id="exportTypeBase" checked> 底薪批次
+            <input type="checkbox" id="exportTypeBase" checked> <span data-i18n="export.batch_type.base">底薪批次</span>
           </label>
           <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal;margin-right:12px;">
-            <input type="checkbox" id="exportTypeBonus" checked> 奖金批次
+            <input type="checkbox" id="exportTypeBonus" checked> <span data-i18n="export.batch_type.bonus">奖金批次</span>
           </label>
           <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal;">
-            <input type="checkbox" id="exportTypeBackpay" checked> 补发批次
+            <input type="checkbox" id="exportTypeBackpay" checked> <span data-i18n="export.batch_type.backpay">补发批次</span>
           </label>
         </div>
         <div style="flex:0;">
-          <button id="exportDownloadBtn">下载 Excel</button>
+          <button id="exportDownloadBtn" data-i18n="export.download">下载 Excel</button>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px;">
+      <div class="muted" style="margin-top:8px;" data-i18n="export.hint">
         底薪批次导出会拆成"正式工明细"（40个字段）和"合同工明细"（33个字段）两个sheet；奖金批次导出成
         "奖金明细"（24个字段）；补发批次导出成"补发明细"（工号+金额+是否关联到底薪批次在职员工，
         没有完整薪资分量）。每列表头都是"英文字段名（中文说明）"格式。选中的月份+批次类型如果完全
@@ -324,93 +325,94 @@
     <div class="card">
       <div class="chat-log" id="chatLog"></div>
       <div class="chat-input-row">
-        <textarea id="chatInput" placeholder="例如：手机分期部门1-6月人力成本怎么变化的？ / XX部门6月为什么比5月成本高"></textarea>
-        <button id="chatSendBtn">发送</button>
+        <textarea id="chatInput" data-i18n-placeholder="chat.placeholder" placeholder="例如：手机分期部门1-6月人力成本怎么变化的？ / XX部门6月为什么比5月成本高"></textarea>
+        <button id="chatSendBtn" data-i18n="chat.send">发送</button>
       </div>
-      <div class="muted" style="margin-top:8px;">这是免费的关键词匹配问答，不接外部AI：只识别问题里的部门名、月份和"为什么/环比"这类词，再从确定性统计结果里拼出回答，不会编数字；识别不出来会明确告诉你，不会瞎猜。</div>
+      <div class="muted" style="margin-top:8px;" data-i18n="chat.hint">这是免费的关键词匹配问答，不接外部AI：只识别问题里的部门名、月份和"为什么/环比"这类词，再从确定性统计结果里拼出回答，不会编数字；识别不出来会明确告诉你，不会瞎猜。</div>
     </div>
   </div>
 
   <!-- 用户权限（仅管理员） -->
   <div class="tab-panel" id="tab-permissions">
     <div class="card">
-      <h3>新建账号</h3>
+      <h3 data-i18n="perm.create_user_title">新建账号</h3>
       <div class="row">
         <div>
-          <label>用户名</label>
+          <label data-i18n="perm.username">用户名</label>
           <input type="text" id="newUserUsername">
         </div>
         <div>
-          <label>密码</label>
+          <label data-i18n="perm.password">密码</label>
           <input type="password" id="newUserPassword">
         </div>
         <div>
-          <label>角色</label>
+          <label data-i18n="perm.role">角色</label>
           <select id="newUserRole">
-            <option value="viewer">viewer（只读，按下方权限限定范围）</option>
-            <option value="admin">admin（管理员，全权限）</option>
+            <option value="viewer" data-i18n="perm.role.viewer">viewer（只读，按下方权限限定范围）</option>
+            <option value="admin" data-i18n="perm.role.admin">admin（管理员，全权限）</option>
           </select>
         </div>
         <div style="flex:0;">
-          <button id="createUserBtn">创建</button>
+          <button id="createUserBtn" data-i18n="perm.create">创建</button>
         </div>
       </div>
       <div class="error" id="createUserError"></div>
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>账号列表</h3>
+      <h3 data-i18n="perm.user_list_title">账号列表</h3>
       <table>
-        <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th></th></tr></thead>
+        <thead><tr><th data-i18n="perm.table.username">用户名</th><th data-i18n="perm.table.role">角色</th><th data-i18n="perm.table.status">状态</th><th></th></tr></thead>
         <tbody id="userListTable"></tbody>
       </table>
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>查阅权限分配</h3>
+      <h3 data-i18n="perm.grant_title">查阅权限分配</h3>
       <div class="row">
         <div>
-          <label>选择账号</label>
+          <label data-i18n="perm.select_account">选择账号</label>
           <select id="permUserSelect"></select>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px;">
+      <div class="muted" style="margin-top:8px;" data-i18n="perm.grant_hint">
         可以一次勾选多个实体、多个部门，点一次"批量授予"就会全部生效。勾了某个实体的"整个实体"，
         就不用再勾它下面的具体部门了（会被自动忽略，避免重复规则）。
       </div>
       <div id="permScopeChecklist" style="margin-top:12px;"></div>
       <div class="row" style="margin-top:10px;">
         <div style="flex:0;">
-          <button id="grantPermBtn">批量授予</button>
+          <button id="grantPermBtn" data-i18n="perm.grant_batch">批量授予</button>
         </div>
       </div>
       <div class="error" id="grantPermError"></div>
-      <div class="muted" style="margin-top:8px;">
+      <div class="muted" style="margin-top:8px;" data-i18n="perm.grant_rule_hint">
         每条授权规则本身就是一个完整范围："整体实体"授予该实体下全部部门；"实体下的特定部门"只授予那一个
         实体+部门的组合，不会连带其他实体下的同名部门。一个账号可以有多条规则，规则之间取并集。
         没有任何规则的账号什么都看不到。admin 账号不受此限制。
       </div>
       <label style="margin-top:10px;display:inline-flex;align-items:center;gap:6px;font-weight:normal;">
-        <input type="checkbox" id="permShowRevoked"> 显示已撤销的规则（审计追溯用）
+        <input type="checkbox" id="permShowRevoked"> <span data-i18n="perm.show_revoked">显示已撤销的规则（审计追溯用）</span>
       </label>
       <table style="margin-top:8px;">
-        <thead><tr><th>类型</th><th>实体</th><th>部门</th><th>状态</th><th>授权人/时间</th><th></th></tr></thead>
+        <thead><tr><th data-i18n="perm.table.type">类型</th><th data-i18n="perm.table.entity">实体</th><th data-i18n="perm.table.department">部门</th><th data-i18n="perm.table.status">状态</th><th data-i18n="perm.table.granted_by_time">授权人/时间</th><th></th></tr></thead>
         <tbody id="permCurrentList"></tbody>
       </table>
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>操作日志（上传/修正/删除审计记录）</h3>
+      <h3 data-i18n="perm.oplog_title">操作日志（上传/修正/删除审计记录）</h3>
       <div id="opLogList"></div>
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>下载记录（谁在什么时候下载过什么范围的薪酬明细）</h3>
-      <div class="muted">下载一旦发生就完全脱离系统权限控制，这份记录是万一数据外泄时定位来源用的。</div>
+      <h3 data-i18n="perm.downloadlog_title">下载记录（谁在什么时候下载过什么范围的薪酬明细）</h3>
+      <div class="muted" data-i18n="perm.downloadlog.hint">下载一旦发生就完全脱离系统权限控制，这份记录是万一数据外泄时定位来源用的。</div>
       <div id="downloadLogList" style="margin-top:8px;"></div>
     </div>
   </div>
 </div>
 
+<script src="/static/js/i18n.js"></script>
 <script src="/static/js/api.js"></script>
 <script src="/static/js/dashboard.js"></script>

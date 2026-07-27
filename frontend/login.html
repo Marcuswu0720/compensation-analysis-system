@@ -1,18 +1,21 @@
-<title>登录 - 薪酬人力成本分析工具</title>
+<title data-i18n="login.title">登录 - 薪酬人力成本分析工具</title>
 <link rel="stylesheet" href="/static/css/style.css">
 <div class="center-page">
   <form class="card login-card" id="loginForm">
-    <h1>薪酬人力成本分析工具</h1>
-    <p>内部工具，登录后使用</p>
-    <label>用户名</label>
+    <h1 data-i18n="app.title.short">薪酬人力成本分析工具</h1>
+    <p data-i18n="app.tagline">内部工具，登录后使用</p>
+    <label data-i18n="login.username">用户名</label>
     <input type="text" id="username" autocomplete="username" required>
-    <label>密码</label>
+    <label data-i18n="login.password">密码</label>
     <input type="password" id="password" autocomplete="current-password" required>
     <div class="error" id="loginError"></div>
-    <button type="submit" style="width:100%;margin-top:8px;">登录</button>
+    <button type="submit" style="width:100%;margin-top:8px;" data-i18n="login.submit">登录</button>
   </form>
 </div>
+<script src="/static/js/i18n.js"></script>
 <script>
+mountLangSwitch(document.querySelector('.login-card'));
+
 fetch('/api/auth/me', { credentials: 'same-origin' }).then((r) => {
   if (r.ok) window.location.href = '/dashboard';
 });
@@ -31,12 +34,12 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      errEl.textContent = data.detail || '登录失败';
+      errEl.textContent = data.detail || t('login.failed');
       return;
     }
     window.location.href = '/dashboard';
   } catch (err) {
-    errEl.textContent = '网络错误，请重试';
+    errEl.textContent = t('login.network_error');
   }
 });
 </script>
