@@ -104,6 +104,7 @@ const TRANSLATIONS = {
 
     'cat.title': '类目趋势 / 两点比较',
     'cat.categories': '薪资类目（可多选）',
+    'cat.supplemental_hint': '"奖金批次"/"补发批次"是当月单独上传的奖金批次（如pp/flexi奖金批次）和补发批次的金额，不计入"奖金/提成"（该项只统计底薪批次自带的提成字段）；勾选全部类目后加总即等于"人力成本合计"。',
     'cat.employment_type': '用工类型',
     'cat.employment_type.all': '全部',
     'cat.employment_type.formal': '仅正式工',
@@ -351,6 +352,7 @@ const TRANSLATIONS = {
 
     'cat.title': 'Category Trend / Two-Point Comparison',
     'cat.categories': 'Salary Categories (multi-select)',
+    'cat.supplemental_hint': '"Bonus Batch" / "Backpay Batch" are the amounts from that month’s standalone bonus batch uploads (e.g. pp/flexi bonus batches) and backpay uploads - not included in "Commission / Bonus" (which only counts the commission field carried on the base batch). Selecting every category and summing them equals "Total HR Cost".',
     'cat.employment_type': 'Employment Type',
     'cat.employment_type.all': 'All',
     'cat.employment_type.formal': 'Formal only',
@@ -523,6 +525,8 @@ const CATEGORY_LABEL_EN = {
   overtime_amount: 'Overtime',
   other_income: 'Other Income',
   employer_statutory_cost: 'Employer Statutory Cost',
+  supplemental_bonus: 'Bonus Batch',
+  supplemental_backpay: 'Backpay Batch',
   gross_salary: 'Gross Salary',
   net_pay: 'Net Pay',
   deduction_total: 'Employee Deductions',
