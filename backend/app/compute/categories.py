@@ -3,9 +3,22 @@ added by PRD V1.7 §3.1, per-capita/median/employment-type split added by
 PRD V1.9 §1-3): trend for one or more categories at once, cross-department
 comparison for a category in one month, and the full cost-composition
 percentage split for a scope/month. All deterministic SQL aggregation over
-the component fields ingestion/salary_components.py extracts - no
-supplemental (bonus/backpay) folding here, since those only ever populate
-hr_cost via compute/trends.py, not the per-component fields.
+the component fields ingestion/salary_components.py extracts.
+
+Found against a real reconciliation the user did in Excel: get_categories_
+trend()'s "人力成本合计" (hr_cost) category used to be base-batch-only, same
+as every other category here (底薪/绩效薪资/奖金提成/加班/其他收入/雇主社保
+etc. - none of those have a supplemental-batch equivalent, since a bonus/
+backpay row is just a flat amount, not a full component breakdown). But
+"人力成本合计" specifically is supposed to be the SAME "total cost" figure
+get_trend() already reports elsewhere in the app (趋势查询 page's total),
+which DOES fold in bonus/backpay (see compute/trends.py's get_trend() and
+get_supplemental_cost_by_month()) - leaving it out here made this page's
+total silently ~10% short of the real total cost whenever a month had a
+sizeable bonus batch. Fixed by adding the same get_supplemental_cost_by_month()
+figure on top of the hr_cost category specifically (not the other
+categories, which have no supplemental equivalent to add), both in the
+grouped-SUM path and the per-capita path.
 """
 
 import statistics
@@ -15,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from ..models import MonthlyEmployeeSnapshot
 from .scope import ScopeRule, apply_permission_scope, apply_scope_filter
+from .trends import get_supplemental_cost_by_month
 
 ScopeValue = str | list[str] | None
 
@@ -114,16 +128,27 @@ def get_categories_trend(
         q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
-    results = []
+    supplemental_by_month = (
+        get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type) if "hr_cost" in categories else {}
+    )
+
+    base_by_month = {}
     for row in q.all():
         month, headcount, *totals = row
-        results.append(
-            {
-                "month": month,
-                "headcount": headcount,
-                "categories": {cat: (total or 0.0) for cat, total in zip(categories, totals)},
-            }
-        )
+        base_by_month[month] = (headcount, {cat: (total or 0.0) for cat, total in zip(categories, totals)})
+
+    # A month can have a bonus/backpay batch uploaded without a base batch
+    # (or with the base batch not yet uploaded) - same edge case get_trend()
+    # already guards against (see compute/trends.py) - don't silently drop
+    # that month's supplemental cost just because there's no base row for it.
+    all_months = sorted(set(base_by_month) | set(supplemental_by_month))
+    results = []
+    for month in all_months:
+        headcount, cat_totals = base_by_month.get(month, (0, {cat: 0.0 for cat in categories}))
+        cat_totals = dict(cat_totals)
+        if "hr_cost" in cat_totals:
+            cat_totals["hr_cost"] += supplemental_by_month.get(month, 0.0)
+        results.append({"month": month, "headcount": headcount, "categories": cat_totals})
     return results
 
 
@@ -131,7 +156,17 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
     """PRD V1.9 §2.1: 人均 = 类目总额 ÷ 该范围内当月在职总人数（跟 get_trend
     的"在职人数（含当月内离职）"口径一致），拆用工类型时分母各自独立计算，
     不共用总分母 - which falls out naturally here since `employment_type`
-    filters the underlying row set BEFORE headcount is computed as len(rows)."""
+    filters the underlying row set BEFORE headcount is computed as len(rows).
+
+    Same supplemental (bonus/backpay) fold-in as the non-per-capita branch
+    above for the "hr_cost" category's total/per-capita figures - but NOT
+    for its median: median needs each individual employee's own value, and
+    supplemental amounts only apply to whichever staff_ids the bonus/backpay
+    batch actually lists (not every employee), so spreading the month's
+    supplemental total evenly across every employee's hr_cost before taking
+    the median would misrepresent the actual distribution. Left as a known
+    gap rather than guessed at - hr_cost's median here still reflects the
+    base batch only."""
     cols = [_column(c) for c in categories]
     q = _base_query(db, department, entity, scope_rules, months, employment_type).with_entities(MonthlyEmployeeSnapshot.month, *cols)
     rows = q.order_by(MonthlyEmployeeSnapshot.month).all()
@@ -140,9 +175,14 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
     for row in rows:
         by_month.setdefault(row[0], []).append(row[1:])
 
+    supplemental_by_month = (
+        get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type) if "hr_cost" in categories else {}
+    )
+
+    all_months = sorted(set(by_month) | set(supplemental_by_month))
     results = []
-    for month in sorted(by_month):
-        employee_rows = by_month[month]
+    for month in all_months:
+        employee_rows = by_month.get(month, [])
         headcount = len(employee_rows)
         totals: dict[str, float] = {}
         per_capita_vals: dict[str, float] = {}
@@ -150,6 +190,8 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
         for i, cat in enumerate(categories):
             values = [(r[i] or 0.0) for r in employee_rows]
             total = sum(values)
+            if cat == "hr_cost":
+                total += supplemental_by_month.get(month, 0.0)
             totals[cat] = total
             per_capita_vals[cat] = (total / headcount) if headcount else 0.0
             median_vals[cat] = statistics.median(values) if values else 0.0
