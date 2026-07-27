@@ -3,7 +3,7 @@ from app.compute.categories import compare_departments_by_category, get_categori
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
 
-from .xlsx_fixtures import build_component_workbook
+from .xlsx_fixtures import build_component_workbook, build_supplemental_workbook
 
 MONTH1_EMPLOYEES = [
     {"staff_id": "E001", "name": "Alice", "role": "formal", "department": "Ops", "basic": 100000, "perf_bonus": 20000, "commission": 0, "overtime": 0, "statutory": 10000},
@@ -156,6 +156,49 @@ def test_get_categories_trend_employment_type_filter_uses_its_own_denominator(db
     contract = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"], employment_type="Contract")
     assert contract[0]["headcount"] == 1
     assert contract[0]["categories"]["basic_salary_actual"] == 50000
+
+
+def test_get_categories_trend_hr_cost_includes_supplemental_bonus_and_backpay(db_session):
+    """Regression test found against a real user reconciliation done in
+    Excel: the "人力成本合计" (hr_cost) category on the 薪资类目 page used to
+    only sum the base batch's hr_cost, silently missing whatever a month's
+    standalone bonus/backpay batch added on top - unlike get_trend()'s
+    total_hr_cost (趋势查询 page), which already folds both in. Every other
+    category here (底薪/绩效薪资/etc.) correctly stays base-only, since
+    supplemental rows don't have a component breakdown - only hr_cost should
+    pick up the extra amount, and headcount must stay unchanged (mirrors
+    test_backpay_adds_on_top_of_base_without_touching_headcount in
+    test_supplemental.py, using get_categories_trend instead of get_trend)."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+    base_hr_cost = 130000 + 59000 + 98000  # Alice + Bob + Carol, from test_category_trend_and_composition_use_real_column_names
+
+    backpay = build_supplemental_workbook([("E001", "Alice", "Sales", 500)])
+    batch = stage_upload(db_session, month="2026-01", file_bytes=backpay, filename="bp.xlsx", uploaded_by="t", salary_type="backpay")
+    confirm_upload(db_session, batch, operator="tester")
+
+    trend = get_categories_trend(db_session, ["basic_salary_actual", "hr_cost"], months=["2026-01"])
+    assert trend[0]["headcount"] == 3  # backpay doesn't create headcount
+    assert trend[0]["categories"]["basic_salary_actual"] == 230000  # unaffected - no supplemental equivalent for this category
+    assert trend[0]["categories"]["hr_cost"] == base_hr_cost + 500
+
+
+def test_get_categories_trend_hr_cost_per_capita_includes_supplemental_but_median_stays_base_only(db_session):
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+    base_hr_cost = 130000 + 59000 + 98000
+
+    backpay = build_supplemental_workbook([("E001", "Alice", "Sales", 900)])
+    batch = stage_upload(db_session, month="2026-01", file_bytes=backpay, filename="bp.xlsx", uploaded_by="t", salary_type="backpay")
+    confirm_upload(db_session, batch, operator="tester")
+
+    trend = get_categories_trend(db_session, ["hr_cost"], months=["2026-01"], per_capita=True)
+    row = trend[0]
+    assert row["headcount"] == 3
+    assert row["categories"]["hr_cost"] == base_hr_cost + 900
+    assert abs(row["per_capita"]["hr_cost"] - (base_hr_cost + 900) / 3) < 1e-6
+    # median is a per-employee figure - backpay only applies to whichever
+    # staff_ids the batch lists, so it deliberately stays base-batch-only
+    # (documented limitation, see _get_categories_trend_per_capita's docstring)
+    assert row["median"]["hr_cost"] == sorted([130000, 59000, 98000])[1]
 
 
 def test_get_categories_trend_employment_type_filter_combines_with_per_capita(db_session):

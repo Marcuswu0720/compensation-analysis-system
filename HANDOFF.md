@@ -168,6 +168,28 @@
      `format_date_value()` 这一个入口做了兜底**——如果以后其他非日期字段也出现过 Excel 把内容
      存成意外类型（比如数字列被存成时间、文本列被存成公式对象）导致同样的 JSON 序列化崩溃，
      思路是一样的：定位到具体类型，在这个统一函数里加一个分支，而不是在每个调用点各自防御。
+  5. **"薪资类目/两点比较"页面"人力成本合计"不含奖金批次**（用户自己在 Excel 里手工对账，拿
+     底薪 sheet 的 HR Cost 加奖金 sheet 的总额算出正确答案，跟页面显示的数字对不上，差额正好是
+     当月奖金批次总额）——`compute/categories.py` 的 `get_categories_trend()` 里"人力成本
+     合计"这个类目此前只查 `MonthlyEmployeeSnapshot.hr_cost`（底薪批次），没有像 `compute/
+     trends.py` 的 `get_trend()`（"趋势查询"页面用的、已验证过的口径）那样把奖金/补发的
+     `SupplementalPaySnapshot.amount` 加进去，导致两个页面对"总成本"这同一个概念给出了不一致的
+     数字。这是一个真正的口径遗漏，不是别名/表头问题。修复：把 `get_trend()` 里原来私有的
+     `_supplemental_by_month()` 提成公共函数 `get_supplemental_cost_by_month()`（加了一个可选
+     `employment_type` 参数，因为 `get_categories_trend` 支持"仅正式工/仅合同工"筛选而
+     `get_trend` 不需要），在 `get_categories_trend()` 的总额模式和人均模式里，**只**给"人力成本
+     合计"这一个类目叠加这部分金额（底薪/绩效薪资/奖金提成等其他类目保持不变，因为奖金/补发批次
+     只有一个总金额，没有这些明细拆分，硬加会产生虚假精度）。人均模式下"人力成本合计"的均值会
+     跟着调整，但**中位数依旧只基于底薪批次**（补发/奖金只发给批次里列出的部分工号，不是每个人
+     都有，把月度总额平均摊给所有人再取中位数会歪曲真实分布，这是刻意保留的已知局限，代码注释里
+     写清楚了）。同时处理了"某个月只有奖金批次、还没传底薪批次"这种边界情况（借用 `get_trend()`
+     已经验证过的"月份取并集"处理方式），不会因为没有底薪行就丢掉那个月的奖金成本。新增回归测试
+     `test_get_categories_trend_hr_cost_includes_supplemental_bonus_and_backpay`、
+     `test_get_categories_trend_hr_cost_per_capita_includes_supplemental_but_median_stays_base_only`
+     （`test_component_attribution.py`）。**注意范围**：`compare_departments_by_category`（部门
+     对比）和 `get_cost_composition`（成本构成占比）这两个同文件里的其他函数**没有**改，依旧是
+     底薪批次口径——这次只改了用户实际反馈问题的"类目趋势/两点比较"，如果以后这两个功能也被发现
+     有同样的不一致，思路是复用同一个 `get_supplemental_cost_by_month()`，不要再造一个新的查询。
 
 ## 未完成 / 待跟进事项
 

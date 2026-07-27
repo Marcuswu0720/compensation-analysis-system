@@ -28,13 +28,27 @@ def list_available_months(db: Session) -> list[str]:
     return sorted(base_months | supplemental_months)
 
 
-def _supplemental_by_month(
+def get_supplemental_cost_by_month(
     db: Session,
     months: list[str] | None,
     department: ScopeValue,
     entity: ScopeValue,
     scope_rules: list[ScopeRule] | None,
+    employment_type: str | None = None,
 ) -> dict[str, float]:
+    """The bonus/backpay total (SupplementalPaySnapshot.amount) that
+    get_trend() folds into total_hr_cost on top of the base batch - broken
+    out as its own function (not private to this module) so any other
+    "总成本/人力成本" figure elsewhere in the app can add the exact same
+    number instead of re-deriving its own, potentially-divergent version of
+    "what does bonus+backpay contribute this month" (see compute/
+    categories.py's get_categories_trend, which folds this into its
+    "人力成本合计" category for the same reason).
+
+    `employment_type` is optional and unused by get_trend() itself (that
+    figure is never split by employment type) - it exists for callers like
+    get_categories_trend that do support a Formal/Contract filter and need
+    the supplemental total scoped to match the same filtered headcount."""
     q = db.query(SupplementalPaySnapshot.month, func.sum(SupplementalPaySnapshot.amount)).filter(
         SupplementalPaySnapshot.is_deleted == False  # noqa: E712
     )
@@ -43,6 +57,8 @@ def _supplemental_by_month(
     q = apply_scope_filter(q, SupplementalPaySnapshot.department1, department)
     q = apply_scope_filter(q, SupplementalPaySnapshot.entity, entity)
     q = apply_permission_scope(q, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
+    if employment_type:
+        q = q.filter(SupplementalPaySnapshot.employment_type == employment_type)
     q = q.group_by(SupplementalPaySnapshot.month)
     return {month: amount or 0.0 for month, amount in q.all()}
 
@@ -75,7 +91,7 @@ def get_trend(
     # Bonus/backpay files uploaded standalone (salary_type != 'base') add cost
     # on top of the base batch for the same month without creating headcount -
     # see ingestion/commit.py for why these live in a separate table.
-    supplemental = _supplemental_by_month(db, months, department, entity, scope_rules)
+    supplemental = get_supplemental_cost_by_month(db, months, department, entity, scope_rules)
     base_rows = {month: (headcount, total_hr_cost or 0.0) for month, headcount, total_hr_cost in q.all()}
 
     # A month can have supplemental data uploaded before (or reassigned without)
