@@ -181,6 +181,7 @@ def _insert_supplemental(db: Session, batch: UploadBatch, payload: dict) -> None
                 amount=e["amount"],
                 source_sheet=e["source_sheet"],
                 matched_base_employee=e["matched_base_employee"],
+                category=batch.category,
                 upload_batch_id=batch.id,
                 # PRD V1.6/V1.8: only present for pay_type='bonus' entries
                 # (see ingestion/bonus_batch.py) - backpay entries don't have

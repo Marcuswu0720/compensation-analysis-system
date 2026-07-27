@@ -37,6 +37,12 @@
             <option value="backpay" data-i18n="upload.salary_type.backpay">补发薪资（加班费补发等一次性文件）</option>
           </select>
         </div>
+        <div id="uploadBackpayCategoryWrap" style="display:none;">
+          <label data-i18n="upload.backpay_category">补发所属类目（可不选）</label>
+          <select id="uploadBackpayCategory">
+            <option value="" data-i18n="upload.backpay_category.none">不归类（计入"补发批次"）</option>
+          </select>
+        </div>
         <div style="flex:2;">
           <label data-i18n="upload.file">原始发薪表 Excel</label>
           <input type="file" id="uploadFile" accept=".xlsx">
@@ -46,6 +52,7 @@
         </div>
       </div>
       <div class="muted" style="margin-top:8px;" data-i18n="upload.hint">同一个月份可以分别上传"底薪批次/奖金/补发薪资"三种类型，三者的成本会自动加总；同一类型再次上传会替换掉该类型之前的数据，不影响其他类型。</div>
+      <div class="muted" id="uploadBackpayCategoryHint" style="display:none;margin-top:4px;" data-i18n="upload.backpay_category.hint">如果这份补发文件整体属于某个薪资类目（比如"客服团队加班费补发"就选"加班费"），选上之后趋势查询/薪资类目页面会把这笔金额自动归入该类目，而不是笼统的"补发批次"；不选则保持原有行为。</div>
       <div class="error" id="uploadError"></div>
     </div>
 

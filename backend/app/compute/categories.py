@@ -8,31 +8,39 @@ the component fields ingestion/salary_components.py extracts.
 Found against a real reconciliation the user did in Excel: get_categories_
 trend()'s "人力成本合计" (hr_cost) category used to be base-batch-only, same
 as every other category here (底薪/绩效薪资/奖金提成/加班/其他收入/雇主社保
-etc. - none of those have a supplemental-batch equivalent, since a bonus/
-backpay row is just a flat amount, not a full component breakdown). But
-"人力成本合计" specifically is supposed to be the SAME "total cost" figure
-get_trend() already reports elsewhere in the app (趋势查询 page's total),
-which DOES fold in bonus/backpay (see compute/trends.py's get_trend() and
-get_supplemental_cost_by_month()) - leaving it out here made this page's
-total silently ~10% short of the real total cost whenever a month had a
-sizeable bonus batch. Fixed by adding the same get_supplemental_cost_by_month()
-figure on top of the hr_cost category specifically (not the other
-categories, which have no supplemental equivalent to add), both in the
-grouped-SUM path and the per-capita path.
+etc.). But "人力成本合计" specifically is supposed to be the SAME "total
+cost" figure get_trend() already reports elsewhere in the app (趋势查询
+page's total), which DOES fold in bonus/backpay (see compute/trends.py's
+get_trend() and get_supplemental_cost_by_month()) - leaving it out here made
+this page's total silently short of the real total cost whenever a month had
+a sizeable bonus batch.
 
-A second reconciliation round found the flip side of that same fix: with
-"人力成本合计" now correctly including bonus/backpay, the OTHER categories
-sum to less than it whenever a month has a sizeable 奖金批次/补发批次 - that
-money is real cost, present in the total, but invisible in every category
-breakdown (a bonus/backpay row is a flat SupplementalPaySnapshot.amount,
-never split into 底薪/绩效薪资/奖金提成 the way a base-batch row is, so it
-was never folding into any of THOSE categories - see above). Rather than
-leave that gap unexplained, 奖金批次/补发批次 are now their own categories
-(SUPPLEMENTAL_CATEGORIES below) - not real MonthlyEmployeeSnapshot columns,
-sourced straight from SupplementalPaySnapshot via get_supplemental_cost_
-by_month(pay_type=...)/get_supplemental_amounts_by_month - so 底薪+绩效薪资+
-奖金/提成+奖金批次+补发批次+加班费+其他收入+雇主社保成本 now actually sums
-back up to 人力成本合计.
+A second reconciliation round found the flip side of that fix: with
+"人力成本合计" correctly including bonus/backpay, the other categories
+summed to less than it whenever a month had a sizeable 奖金批次/补发批次 -
+that money was real cost, present in the total, but invisible in every
+category breakdown (a bonus/backpay row is a flat SupplementalPaySnapshot.
+amount, never split into 底薪/绩效薪资/奖金提成 the way a base-batch row is).
+Two things followed from that:
+
+1. 奖金批次/补发批次 became their own categories (SUPPLEMENTAL_CATEGORIES
+   below) so a bonus batch's money (which genuinely has no natural home in
+   底薪/绩效薪资/etc.) is at least visible somewhere, instead of only ever
+   showing up in the "人力成本合计" total.
+2. A 补发批次 (backpay) upload can now optionally be tagged, at upload time,
+   with an EXISTING category it should actually be attributed to (e.g. a
+   "客服团队加班费补发" file tagged as 加班费/overtime_amount) - see models.py's
+   UploadBatch.category / SupplementalPaySnapshot.category docstrings. A
+   tagged backpay batch's amount folds into that real category's own total
+   instead of the generic "补发批次" bucket, which now only ever represents
+   backpay left uncategorized.
+
+Every category's supplemental contribution (if it has one at all) is
+resolved through the single `_supplemental_spec()` below, so every function
+in this module (grouped-SUM trend, per-capita trend, department comparison,
+composition %) sources it the same way instead of five parallel
+re-implementations of "what does this category's supplemental slice look
+like" - see HANDOFF.md's "计算逻辑只写一套" principle.
 """
 
 import statistics
@@ -62,19 +70,20 @@ CATEGORY_FIELDS: dict[str, str] = {
 }
 
 # Categories in CATEGORY_FIELDS that are NOT a MonthlyEmployeeSnapshot column
-# - each is this scope/month's SupplementalPaySnapshot total for the given
-# pay_type instead (see module docstring). Every function below that iterates
-# `categories` branches on this set instead of calling _column() for these.
+# - purely a SupplementalPaySnapshot total (see _supplemental_spec below).
+# Every function that iterates `categories` has to skip these when building
+# the MonthlyEmployeeSnapshot SQL query and call _column() only for the rest.
 SUPPLEMENTAL_CATEGORIES: dict[str, str] = {
     "supplemental_bonus": "bonus",
     "supplemental_backpay": "backpay",
 }
 
 # Real (MonthlyEmployeeSnapshot-column) categories that make up hr_cost, for
-# get_cost_composition's percentage split - excludes derived/informational
-# totals (gross_salary and hr_cost themselves, net_pay/deduction_total which
-# are employee-side, not cost components) and SUPPLEMENTAL_CATEGORIES, which
-# get_cost_composition appends separately since they aren't real columns.
+# get_cost_composition's percentage split and for validating a 补发批次
+# upload's chosen category (routers/upload.py) - excludes derived/
+# informational totals (gross_salary and hr_cost themselves, net_pay/
+# deduction_total which are employee-side, not cost components) and
+# SUPPLEMENTAL_CATEGORIES, which aren't real columns at all.
 COMPOSITION_REAL_FIELDS = [
     "basic_salary_actual",
     "performance_bonus",
@@ -83,6 +92,22 @@ COMPOSITION_REAL_FIELDS = [
     "other_income",
     "employer_statutory_cost",
 ]
+
+
+def _supplemental_spec(cat: str) -> dict | None:
+    """What SupplementalPaySnapshot slice (if any) folds into category `cat`'s
+    total, as kwargs for get_supplemental_cost_by_month/
+    get_supplemental_amounts_by_month. None means this category has no
+    supplemental equivalent at all (gross_salary/net_pay/deduction_total)."""
+    if cat == "hr_cost":
+        return {}  # every bonus+backpay row, regardless of tag
+    if cat == "supplemental_bonus":
+        return {"pay_type": "bonus"}
+    if cat == "supplemental_backpay":
+        return {"pay_type": "backpay", "uncategorized": True}
+    if cat in COMPOSITION_REAL_FIELDS:
+        return {"pay_type": "backpay", "category": cat}
+    return None
 
 
 def _column(category: str):
@@ -156,18 +181,15 @@ def get_categories_trend(
         q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
-    # "hr_cost" folds in the supplemental TOTAL (bonus+backpay combined, same
-    # figure 趋势查询's total_hr_cost uses); "supplemental_bonus"/
-    # "supplemental_backpay" each fold in only their own pay_type instead -
-    # see SUPPLEMENTAL_CATEGORIES/module docstring above.
+    # Every requested category's supplemental slice (see _supplemental_spec)
+    # - hr_cost gets everything, supplemental_bonus/supplemental_backpay get
+    # their own dedicated slice, a real column category gets whatever backpay
+    # was explicitly tagged with it at upload time (module docstring point 2).
     supplemental_by_category: dict[str, dict[str, float]] = {}
-    if "hr_cost" in categories:
-        supplemental_by_category["hr_cost"] = get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type)
-    for cat, pay_type in SUPPLEMENTAL_CATEGORIES.items():
-        if cat in categories:
-            supplemental_by_category[cat] = get_supplemental_cost_by_month(
-                db, months, department, entity, scope_rules, employment_type, pay_type=pay_type
-            )
+    for cat in categories:
+        spec = _supplemental_spec(cat)
+        if spec is not None:
+            supplemental_by_category[cat] = get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type, **spec)
 
     base_by_month = {}
     for row in q.all():
@@ -188,12 +210,9 @@ def get_categories_trend(
         headcount, base_totals = base_by_month.get(month, (0, {}))
         cat_totals = {}
         for cat in categories:
-            if cat in SUPPLEMENTAL_CATEGORIES:
-                cat_totals[cat] = supplemental_by_category[cat].get(month, 0.0)
-            elif cat == "hr_cost":
-                cat_totals[cat] = base_totals.get(cat, 0.0) + supplemental_by_category["hr_cost"].get(month, 0.0)
-            else:
-                cat_totals[cat] = base_totals.get(cat, 0.0)
+            base_val = base_totals.get(cat, 0.0)  # 0.0 for SUPPLEMENTAL_CATEGORIES, which never appear here
+            supp_val = supplemental_by_category.get(cat, {}).get(month, 0.0)
+            cat_totals[cat] = base_val + supp_val
         results.append({"month": month, "headcount": headcount, "categories": cat_totals})
     return results
 
@@ -204,27 +223,26 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
     不共用总分母 - which falls out naturally here since `employment_type`
     filters the underlying row set BEFORE headcount is computed as len(rows).
 
-    Same supplemental (bonus/backpay) fold-in as the non-per-capita branch
-    above for the "hr_cost" category's total/per-capita figures - but NOT
-    for its median: median needs each individual employee's own value, and
-    supplemental amounts only apply to whichever staff_ids the bonus/backpay
-    batch actually lists (not every employee), so spreading the month's
-    supplemental total evenly across every employee's hr_cost before taking
-    the median would misrepresent the actual distribution. Left as a known
-    gap rather than guessed at - hr_cost's median here still reflects the
-    base batch only.
+    Every category's total/per-capita mean folds in its supplemental slice
+    (see _supplemental_spec) the same way as the non-per-capita path above -
+    per-capita always divides by the SAME headcount as every other category
+    (everyone on the base batch that month, not just a bonus/backpay batch's
+    recipients), so the mean stays comparable across categories.
 
-    "supplemental_bonus"/"supplemental_backpay" (see SUPPLEMENTAL_CATEGORIES)
-    have the same total/per-capita treatment - total is that pay_type's
-    SupplementalPaySnapshot sum, per-capita divides it by the SAME headcount
-    as every other category (everyone on the base batch that month, not just
-    the batch's recipients) so it stays comparable to the other categories'
-    per-capita figures. Median is the one place these differ from "hr_cost":
-    a bonus/backpay row IS an individual per-recipient value (unlike hr_cost,
-    which would need a staff_id join against the base rows to isolate one),
-    so the median here is taken directly across the batch's actual recipients
-    - not padded with zeros for non-recipients like the mean is, so it isn't
-    on the exact same population as the other categories' medians."""
+    Median is different: it needs each individual employee's own value, and
+    a bonus/backpay row only applies to whichever staff_ids that batch
+    actually lists (not every employee), so spreading a category's
+    supplemental slice evenly across every employee's value before taking
+    the median would misrepresent the actual distribution. For a real
+    (base-column) category or "hr_cost", the median here stays base-only -
+    a known, documented gap rather than a guess. "supplemental_bonus"/
+    "supplemental_backpay" are the one exception: a bonus/backpay row IS
+    already an individual per-recipient value (unlike a real category, where
+    the supplemental slice would need a staff_id join against the base rows
+    to even attempt a merge), so their median is taken directly across the
+    batch's actual recipients - not padded with zeros for non-recipients
+    like the mean is, so it isn't on the exact same population as the other
+    categories' medians."""
     real_categories = [c for c in categories if c not in SUPPLEMENTAL_CATEGORIES]
     cols = [_column(c) for c in real_categories]
     q = _base_query(db, department, entity, scope_rules, months, employment_type).with_entities(MonthlyEmployeeSnapshot.month, *cols)
@@ -234,18 +252,24 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
     for row in rows:
         by_month.setdefault(row[0], []).append(row[1:])
 
-    hr_cost_supplemental_by_month = (
-        get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type) if "hr_cost" in categories else {}
-    )
-    supplemental_amounts_by_category: dict[str, dict[str, list[float]]] = {
-        cat: get_supplemental_amounts_by_month(db, months, department, entity, scope_rules, employment_type, pay_type=pay_type)
-        for cat, pay_type in SUPPLEMENTAL_CATEGORIES.items()
-        if cat in categories
-    }
+    supplemental_by_category: dict[str, dict[str, float]] = {}
+    supplemental_recipient_values: dict[str, dict[str, list[float]]] = {}
+    for cat in categories:
+        spec = _supplemental_spec(cat)
+        if spec is None:
+            continue
+        if cat in SUPPLEMENTAL_CATEGORIES:
+            supplemental_recipient_values[cat] = get_supplemental_amounts_by_month(
+                db, months, department, entity, scope_rules, employment_type, **spec
+            )
+        else:
+            supplemental_by_category[cat] = get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type, **spec)
 
-    all_months = set(by_month) | set(hr_cost_supplemental_by_month)
-    for by_month_amounts in supplemental_amounts_by_category.values():
-        all_months |= set(by_month_amounts)
+    all_months = set(by_month)
+    for by_month_totals in supplemental_by_category.values():
+        all_months |= set(by_month_totals)
+    for by_month_values in supplemental_recipient_values.values():
+        all_months |= set(by_month_values)
     all_months = sorted(all_months)
 
     results = []
@@ -257,16 +281,14 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
         median_vals: dict[str, float] = {}
         for i, cat in enumerate(real_categories):
             values = [(r[i] or 0.0) for r in employee_rows]
-            total = sum(values)
-            if cat == "hr_cost":
-                total += hr_cost_supplemental_by_month.get(month, 0.0)
+            total = sum(values) + supplemental_by_category.get(cat, {}).get(month, 0.0)
             totals[cat] = total
             per_capita_vals[cat] = (total / headcount) if headcount else 0.0
             median_vals[cat] = statistics.median(values) if values else 0.0
         for cat in categories:
             if cat not in SUPPLEMENTAL_CATEGORIES:
                 continue
-            recipient_values = supplemental_amounts_by_category[cat].get(month, [])
+            recipient_values = supplemental_recipient_values[cat].get(month, [])
             total = sum(recipient_values)
             totals[cat] = total
             per_capita_vals[cat] = (total / headcount) if headcount else 0.0
@@ -279,13 +301,23 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
 
 
 def _supplemental_by_dept(
-    db: Session, month: str, entity: ScopeValue, scope_rules: list[ScopeRule] | None, pay_type: str | None = None
+    db: Session,
+    month: str,
+    entity: ScopeValue,
+    scope_rules: list[ScopeRule] | None,
+    pay_type: str | None = None,
+    category: str | None = None,
+    uncategorized: bool = False,
 ) -> dict[str | None, float]:
     q = db.query(SupplementalPaySnapshot.department1, func.sum(SupplementalPaySnapshot.amount)).filter(
         SupplementalPaySnapshot.month == month, SupplementalPaySnapshot.is_deleted == False  # noqa: E712
     )
     if pay_type:
         q = q.filter(SupplementalPaySnapshot.pay_type == pay_type)
+    if uncategorized:
+        q = q.filter(SupplementalPaySnapshot.category.is_(None))
+    elif category:
+        q = q.filter(SupplementalPaySnapshot.category == category)
     q = apply_scope_filter(q, SupplementalPaySnapshot.entity, entity)
     q = apply_permission_scope(q, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
     return {dept: total or 0.0 for dept, total in q.group_by(SupplementalPaySnapshot.department1).all()}
@@ -306,10 +338,14 @@ def compare_departments_by_category(
     hr_cost_by_dept = {dept: total or 0.0 for dept, total in hr_cost_q.group_by(MonthlyEmployeeSnapshot.department1).all()}
     # pct_of_hr_cost's denominator has to be the same "人力成本合计" figure
     # get_trend()/get_categories_trend() report (base + supplemental,
-    # bonus+backpay combined) - not just the base-batch sum above, same
-    # reasoning as the module docstring's "second reconciliation round".
+    # bonus+backpay combined, any category tag) - not just the base-batch sum
+    # above, same reasoning as the module docstring's "second reconciliation
+    # round".
     for dept, supp_total in _supplemental_by_dept(db, month, entity, scope_rules).items():
         hr_cost_by_dept[dept] = hr_cost_by_dept.get(dept, 0.0) + supp_total
+
+    spec = _supplemental_spec(category)
+    supplemental_total_by_dept = _supplemental_by_dept(db, month, entity, scope_rules, **spec) if spec is not None else {}
 
     if category in SUPPLEMENTAL_CATEGORIES:
         headcount_q = db.query(MonthlyEmployeeSnapshot.department1, func.count(MonthlyEmployeeSnapshot.id)).filter(
@@ -318,10 +354,9 @@ def compare_departments_by_category(
         headcount_q = apply_scope_filter(headcount_q, MonthlyEmployeeSnapshot.entity, entity)
         headcount_q = apply_permission_scope(headcount_q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
         headcount_by_dept = dict(headcount_q.group_by(MonthlyEmployeeSnapshot.department1).all())
-        totals_by_dept = _supplemental_by_dept(db, month, entity, scope_rules, pay_type=SUPPLEMENTAL_CATEGORIES[category])
 
         results = []
-        for department, total in totals_by_dept.items():
+        for department, total in supplemental_total_by_dept.items():
             headcount = headcount_by_dept.get(department, 0)
             hr_cost = hr_cost_by_dept.get(department, 0.0)
             results.append(
@@ -352,17 +387,20 @@ def compare_departments_by_category(
         headcount_by_dept[department] = headcount
         base_total_by_dept[department] = total or 0.0
 
-    # "hr_cost" needs the same base+supplemental fold-in as everywhere else
-    # that reports it - including a department that has ONLY a supplemental
-    # (bonus/backpay) batch and no base-batch employees at all this month,
-    # same "don't silently drop a supplemental-only slot" guard get_trend()/
-    # get_categories_trend() already apply per-month.
-    departments = set(base_total_by_dept) | (set(hr_cost_by_dept) if category == "hr_cost" else set())
+    # A department can have ONLY a supplemental contribution to this category
+    # this month (e.g. hr_cost via a bonus-only department, or a real
+    # category via a tagged backpay batch covering a department with no base
+    # employees at all) - same "don't silently drop a supplemental-only
+    # slot" guard get_trend()/get_categories_trend() already apply per-month.
+    departments = set(base_total_by_dept) | set(hr_cost_by_dept if category == "hr_cost" else supplemental_total_by_dept)
 
     results = []
     for department in departments:
         headcount = headcount_by_dept.get(department, 0)
-        total = hr_cost_by_dept.get(department, 0.0) if category == "hr_cost" else base_total_by_dept.get(department, 0.0)
+        if category == "hr_cost":
+            total = hr_cost_by_dept.get(department, 0.0)
+        else:
+            total = base_total_by_dept.get(department, 0.0) + supplemental_total_by_dept.get(department, 0.0)
         hr_cost = hr_cost_by_dept.get(department, 0.0)
         results.append(
             {
@@ -397,20 +435,21 @@ def get_cost_composition(
     *component_totals, base_hr_cost = row
     base_hr_cost = base_hr_cost or 0.0
 
-    # 奖金批次/补发批次 aren't MonthlyEmployeeSnapshot columns (see module
-    # docstring) - pulled from SupplementalPaySnapshot instead, and folded
-    # into hr_cost here too so this view's percentages sum to 100% again
-    # instead of silently excluding whatever a month's bonus/backpay batch
-    # added to the real total.
+    # 奖金批次/补发批次、以及被打上标签的补发批次金额都不是 MonthlyEmployeeSnapshot
+    # 列（见模块文档），一律走 SupplementalPaySnapshot - 每个 COMPOSITION_REAL_FIELDS
+    # 类目也要把自己被标记的补发批次金额加进去，成本构成的百分比总和才会重新等于100%，
+    # 而不是悄悄漏掉某个月奖金/补发批次贡献的那部分。
+    display_fields = COMPOSITION_REAL_FIELDS + list(SUPPLEMENTAL_CATEGORIES)
     supplemental_totals = {
-        cat: get_supplemental_cost_by_month(db, [month], department, entity, scope_rules, pay_type=pay_type).get(month, 0.0)
-        for cat, pay_type in SUPPLEMENTAL_CATEGORIES.items()
+        field: get_supplemental_cost_by_month(db, [month], department, entity, scope_rules, **_supplemental_spec(field)).get(month, 0.0)
+        for field in display_fields
     }
-    hr_cost = base_hr_cost + sum(supplemental_totals.values())
+    all_supplemental = get_supplemental_cost_by_month(db, [month], department, entity, scope_rules).get(month, 0.0)
+    hr_cost = base_hr_cost + all_supplemental
 
     categories = []
-    for field, total in zip(COMPOSITION_REAL_FIELDS, component_totals):
-        total = total or 0.0
+    for field, base_total in zip(COMPOSITION_REAL_FIELDS, component_totals):
+        total = (base_total or 0.0) + supplemental_totals[field]
         categories.append(
             {
                 "category": field,

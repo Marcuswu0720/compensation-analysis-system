@@ -79,7 +79,13 @@ def _field_mapping_issue(scope_label: str, total: int, matched: int, missing: li
 
 
 def stage_upload(
-    db: Session, month: str, file_bytes: bytes, filename: str, uploaded_by: str, salary_type: str = "base"
+    db: Session,
+    month: str,
+    file_bytes: bytes,
+    filename: str,
+    uploaded_by: str,
+    salary_type: str = "base",
+    category: str | None = None,
 ) -> UploadBatch:
     if salary_type not in SALARY_TYPES:
         raise ValueError(f"salary_type 必须是 {SALARY_TYPES} 之一")
@@ -93,6 +99,10 @@ def stage_upload(
     batch = UploadBatch(
         month=month,
         salary_type=salary_type,
+        # category only means anything for a 补发批次 (see models.py's
+        # UploadBatch.category docstring) - a bonus/base upload passing one
+        # would be a caller bug, not something to silently store.
+        category=category if salary_type == "backpay" else None,
         original_filename=filename,
         uploaded_by=uploaded_by,
         status="pending_review",

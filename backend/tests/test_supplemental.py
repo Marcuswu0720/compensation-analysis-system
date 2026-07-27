@@ -1,4 +1,5 @@
 from app.compute.attribution import compute_attribution
+from app.compute.categories import get_categories_trend
 from app.compute.trends import get_trend, list_available_months
 from app.ingestion.commit import confirm_upload, delete_confirmed_batch, reassign_month
 from app.ingestion.loader import stage_upload
@@ -127,3 +128,45 @@ def test_supplemental_only_month_still_shows_in_trend_not_dropped(db_session):
     assert row["total_hr_cost"] == 300
     assert row["headcount"] == 0
     assert "2026-05" in list_available_months(db_session)
+
+
+def test_backpay_category_tag_folds_into_that_category_not_generic_bucket(db_session):
+    _confirm_base(db_session, "2026-05", build_month1_workbook)
+
+    batch = stage_upload(
+        db_session,
+        month="2026-05",
+        file_bytes=build_supplemental_workbook([("E001", "Alice", "Sales", 300)]),
+        filename="customer_service_overtime_backpay.xlsx",
+        uploaded_by="t",
+        salary_type="backpay",
+        category="overtime_amount",
+    )
+    assert batch.category == "overtime_amount"
+    confirm_upload(db_session, batch, operator="tester")
+
+    rows = get_categories_trend(db_session, categories=["overtime_amount", "supplemental_backpay", "hr_cost"], months=["2026-05"])
+    cats = rows[0]["categories"]
+    assert cats["overtime_amount"] == 300  # month1 workbook's base overtime is 0 for every employee
+    assert cats["supplemental_backpay"] == 0  # nothing uncategorized this month
+    assert cats["hr_cost"] == 4200 + 300
+
+
+def test_uncategorized_backpay_still_falls_into_generic_bucket(db_session):
+    _confirm_base(db_session, "2026-05", build_month1_workbook)
+
+    batch = stage_upload(
+        db_session,
+        month="2026-05",
+        file_bytes=build_supplemental_workbook([("E001", "Alice", "Sales", 500)]),
+        filename="bp.xlsx",
+        uploaded_by="t",
+        salary_type="backpay",
+    )
+    assert batch.category is None
+    confirm_upload(db_session, batch, operator="tester")
+
+    rows = get_categories_trend(db_session, categories=["overtime_amount", "supplemental_backpay"], months=["2026-05"])
+    cats = rows[0]["categories"]
+    assert cats["overtime_amount"] == 0
+    assert cats["supplemental_backpay"] == 500
