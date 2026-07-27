@@ -68,17 +68,32 @@ SHEET_ROLE_ORDER = ["formal", "contract_pp", "contract_flexi", "exits", "bonus_p
 EMPLOYEE_SHEET_KEYS = ["formal", "contract_pp", "contract_flexi"]
 BONUS_SHEET_KEYS = ["bonus_pp", "bonus_flexi"]
 
+# Trailing summary/subtotal rows at the bottom of a sheet re-use the staff_id
+# column to hold a row label ("TOTAL", "HR Cost", etc.) instead of a real
+# staff ID - is_summary_row() checks the cell against this set (exact match,
+# not substring) to skip them. A 2026-07 Contract-Flexi file's own summary
+# block used "Gross Salary"/"Bonus & Arrears"/"Net Pay"/"Total Amount" -
+# close to, but not exact matches for, "gross"/"total"/"net amount" already
+# here - and slipped through as 4 phantom zero-cost "employees" (their other
+# salary-component cells were blank, so no dollar total was affected, but
+# headcount_total came out 4 too high). Added as their own exact entries
+# rather than switching to substring matching, since a real staff ID could
+# plausibly contain "total" as a substring in some future file.
 SUMMARY_ROW_MARKERS = {
     "total",
+    "total amount",
     "item",
     "staff number",
     "performance bonus",
     "commission",
     "other",
     "gross",
+    "gross salary",
+    "bonus & arrears",
     "paye",
     "hr cost",
     "net amount",
+    "net pay",
     "deduction",
 }
 

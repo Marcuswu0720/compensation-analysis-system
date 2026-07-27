@@ -55,6 +55,19 @@ def test_summary_row_is_filtered_out_of_bonus_sheet(db_session):
     assert bonus_ids == ["E001"]  # the 'ITEM'/'TOTAL'/'Staff Number'/etc rows must not appear
 
 
+def test_summary_row_markers_cover_2026_07_contract_flexi_wording():
+    """Found in a real 2026-07 Contract-Flexi sheet: its trailing summary
+    block spells these labels differently from every other month seen so
+    far ("Gross Salary" instead of "Gross", "Total Amount" instead of
+    "Total", "Net Pay" instead of "Net Amount", "Bonus & Arrears" not
+    covered at all before) - all 4 slipped through as phantom zero-cost
+    "employees" until SUMMARY_ROW_MARKERS picked up the exact wording."""
+    from app.ingestion.parser import is_summary_row
+
+    for label in ["Gross Salary", "Bonus & Arrears", "Net Pay", "Total Amount"]:
+        assert is_summary_row(label), f"{label!r} should be recognized as a summary row"
+
+
 def test_field_alias_and_sheet_name_drift_across_months(db_session):
     _upload_and_confirm(db_session, "2026-01", build_month1_workbook())
     batch2 = _upload_and_confirm(db_session, "2026-02", build_month2_workbook())
