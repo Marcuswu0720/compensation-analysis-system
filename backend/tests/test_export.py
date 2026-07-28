@@ -184,15 +184,19 @@ def test_build_workbook_watermark_sheet_and_data_sheets():
         [], [], [], ["base", "bonus", "backpay"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "Sales", "2026-01", "2026-01", []
     )
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    assert wb.sheetnames == ["说明", "正式工明细", "合同工明细", "奖金明细", "补发明细"]
+    assert wb.sheetnames == ["说明 Notes", "正式工明细 Formal Detail", "合同工明细 Contract Detail", "奖金明细 Bonus Detail", "补发明细 Backpay Detail"]
 
-    info_rows = list(wb["说明"].iter_rows(values_only=True))
+    info_rows = list(wb["说明 Notes"].iter_rows(values_only=True))
     assert info_rows[0][0] == "本文件由 marcus 于 2026-07-25 09:00:00 导出"
-    assert info_rows[1][0] == "数据范围：PalmPay-Sales，2026-01 至 2026-01"
-    assert "底薪批次、奖金批次、补发批次" in info_rows[2][0]
-    assert "保密" in info_rows[3][0]
+    assert info_rows[1][0] == "Exported by marcus at 2026-07-25 09:00:00 (UTC)"
+    assert info_rows[2][0] == "数据范围：PalmPay-Sales，2026-01 至 2026-01"
+    assert info_rows[3][0] == "Scope: PalmPay-Sales, 2026-01 to 2026-01"
+    assert "底薪批次、奖金批次、补发批次" in info_rows[4][0]
+    assert "Base Batch, Bonus Batch, Backpay Batch" in info_rows[5][0]
+    assert "保密" in info_rows[6][0]
+    assert "confidentiality" in info_rows[7][0]
 
-    formal_header = next(wb["正式工明细"].iter_rows(values_only=True))
+    formal_header = next(wb["正式工明细 Formal Detail"].iter_rows(values_only=True))
     assert formal_header[:5] == ("Month（月份）", "Entity（公司实体）", "Staff ID（工号）", "Employment Type（员工类别）", "Staff Name（姓名）")
 
 
@@ -204,7 +208,7 @@ def test_build_workbook_only_base_selected_omits_other_sheets():
 
     workbook_bytes = _build_workbook([], [], [], ["base"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    assert wb.sheetnames == ["说明", "正式工明细", "合同工明细"]
+    assert wb.sheetnames == ["说明 Notes", "正式工明细 Formal Detail", "合同工明细 Contract Detail"]
 
 
 def test_build_workbook_only_bonus_selected_omits_base_and_backpay_sheets():
@@ -215,7 +219,7 @@ def test_build_workbook_only_bonus_selected_omits_base_and_backpay_sheets():
 
     workbook_bytes = _build_workbook([], [], [], ["bonus"], "marcus", datetime(2026, 7, 25, 9, 0, 0), "PalmPay", "全部部门", "2026-01", "2026-01", [])
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    assert wb.sheetnames == ["说明", "奖金明细"]
+    assert wb.sheetnames == ["说明 Notes", "奖金明细 Bonus Detail"]
 
 
 def test_build_workbook_discloses_missing_month_type_combos():
@@ -229,9 +233,11 @@ def test_build_workbook_discloses_missing_month_type_combos():
         [("2026-02", "bonus")],
     )
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
-    info_rows = list(wb["说明"].iter_rows(values_only=True))
+    info_rows = list(wb["说明 Notes"].iter_rows(values_only=True))
     disclosure = [r[0] for r in info_rows if r[0] and "暂无数据" in r[0]]
     assert disclosure and "2026-02 奖金批次" in disclosure[0]
+    disclosure_en = [r[0] for r in info_rows if r[0] and "not yet uploaded" in r[0]]
+    assert disclosure_en and "2026-02 Bonus Batch" in disclosure_en[0]
 
 
 def test_formal_contract_split_uses_employment_type(db_session):
@@ -360,8 +366,8 @@ def test_actual_exported_sheets_have_exactly_the_prd_column_counts(db_session):
     )
     wb = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
 
-    formal_header = next(wb["正式工明细"].iter_rows(values_only=True))
-    contract_header = next(wb["合同工明细"].iter_rows(values_only=True))
+    formal_header = next(wb["正式工明细 Formal Detail"].iter_rows(values_only=True))
+    contract_header = next(wb["合同工明细 Contract Detail"].iter_rows(values_only=True))
     assert len(formal_header) - 1 == 40  # minus the 月份 convenience column
     assert len(contract_header) - 1 == 33
 

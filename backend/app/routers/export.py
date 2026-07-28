@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from ..compute.export import (
     BACKPAY_EXPORT_COLUMNS,
     SALARY_TYPE_LABEL,
+    SALARY_TYPE_LABEL_EN,
     SALARY_TYPES,
     bonus_sheet_columns,
     check_month_type_availability,
@@ -156,17 +157,31 @@ def export_detail(payload: ExportDetailRequest, db: Session = Depends(get_db), u
 
 def _write_watermark_sheet(wb, username, now, entity_label, department_label, start_month, end_month, salary_types, missing) -> None:
     ws = wb.active
-    ws.title = "说明"
+    ws.title = "说明 Notes"
+    batch_types_zh = "、".join(SALARY_TYPE_LABEL[t] for t in salary_types)
+    batch_types_en = ", ".join(SALARY_TYPE_LABEL_EN[t] for t in salary_types)
+    # Each note is one Chinese line immediately followed by its English
+    # translation as its own row - same bilingual convention already used
+    # for the data sheets' column headers (export_header()'s "EnglishName
+    # （中文说明）" format), just applied to the notes/sheet-name text that
+    # had stayed Chinese-only.
     lines = [
         f"本文件由 {username} 于 {now.strftime('%Y-%m-%d %H:%M:%S')} 导出",
+        f"Exported by {username} at {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC)",
         f"数据范围：{entity_label}-{department_label}，{start_month} 至 {end_month}",
-        "批次类型：" + "、".join(SALARY_TYPE_LABEL[t] for t in salary_types),
+        f"Scope: {entity_label}-{department_label}, {start_month} to {end_month}",
+        f"批次类型：{batch_types_zh}",
+        f"Batch types: {batch_types_en}",
         "内容涉及员工薪酬明细，请遵守公司薪酬保密规定，不得外传",
+        "Contains individual salary details - handle per company confidentiality policy, do not forward externally",
     ]
     if missing:
+        missing_zh = "、".join(f"{m} {SALARY_TYPE_LABEL[t]}" for m, t in missing)
+        missing_en = ", ".join(f"{m} {SALARY_TYPE_LABEL_EN[t]}" for m, t in missing)
+        lines.append(f"提示：以下月份/批次类型组合在所选范围内暂无数据，可能尚未上传，未包含在下面的sheet里：{missing_zh}")
         lines.append(
-            "提示：以下月份/批次类型组合在所选范围内暂无数据，可能尚未上传，未包含在下面的sheet里："
-            + "、".join(f"{m} {SALARY_TYPE_LABEL[t]}" for m, t in missing)
+            f"Note: the following month/batch-type combinations have no data in the selected scope (possibly "
+            f"not yet uploaded) and are NOT included in the sheets below: {missing_en}"
         )
     for line in lines:
         ws.append([line])
@@ -195,16 +210,16 @@ def _build_workbook(base_rows, bonus_rows, backpay_rows, salary_types, username,
         verify_sheet_field_count("合同工明细", contract_columns)
         formal_rows = [r for r in base_rows if r["employment_type"] == "Formal"]
         contract_rows = [r for r in base_rows if r["employment_type"] != "Formal"]
-        _write_data_sheet(wb, "正式工明细", formal_rows, formal_columns)
-        _write_data_sheet(wb, "合同工明细", contract_rows, contract_columns)
+        _write_data_sheet(wb, "正式工明细 Formal Detail", formal_rows, formal_columns)
+        _write_data_sheet(wb, "合同工明细 Contract Detail", contract_rows, contract_columns)
 
     if "bonus" in salary_types:
         bonus_columns = bonus_sheet_columns()
         verify_sheet_field_count("奖金明细", bonus_columns)
-        _write_data_sheet(wb, "奖金明细", bonus_rows, bonus_columns)
+        _write_data_sheet(wb, "奖金明细 Bonus Detail", bonus_rows, bonus_columns)
 
     if "backpay" in salary_types:
-        _write_data_sheet(wb, "补发明细", backpay_rows, BACKPAY_EXPORT_COLUMNS)
+        _write_data_sheet(wb, "补发明细 Backpay Detail", backpay_rows, BACKPAY_EXPORT_COLUMNS)
 
     buf = io.BytesIO()
     wb.save(buf)
