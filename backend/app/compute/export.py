@@ -25,6 +25,11 @@ from .scope import ScopeRule, apply_permission_scope, apply_scope_filter
 ScopeValue = str | list[str] | None
 
 SALARY_TYPE_LABEL = {"base": "底薪批次", "bonus": "奖金批次", "backpay": "补发批次"}
+# English counterpart for routers/export.py's bilingual "说明" sheet - the
+# data columns themselves were already bilingual ("EnglishName（中文说明）"
+# format, see export_header()) since PRD V1.6; this just extends that same
+# convention to the sheet names/notes text, which had stayed Chinese-only.
+SALARY_TYPE_LABEL_EN = {"base": "Base Batch", "bonus": "Bonus Batch", "backpay": "Backpay Batch"}
 SALARY_TYPES = ("base", "bonus", "backpay")
 
 # "Month" is a convenience column prepended to every detail sheet for
