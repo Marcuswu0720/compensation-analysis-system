@@ -1,0 +1,13 @@
+{
+  "name": "desktop-pet",
+  "version": "1.0.0",
+  "description": "A cross-platform desktop pet (Electron) with idle animation, wandering, drag, click reactions and a right-click menu. Ships with a placeholder cartoon look you can swap for a real illustration later.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
