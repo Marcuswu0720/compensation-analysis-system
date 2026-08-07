@@ -392,22 +392,69 @@ function initExportTab() {
 }
 
 // ---------- trend tab ----------
-function renderTrend(rows) {
-  const ctx = document.getElementById('trendChart');
-  const labels = rows.map((r) => r.month);
-  const costData = rows.map((r) => r.total_hr_cost);
-  const headcountData = rows.map((r) => r.headcount);
+// Mirrors compute/categories.py's SUPPLEMENTAL_CATEGORIES-adjacent PRD V1.9
+// §3.1 pattern: "对比 Formal vs Contract" is two plain calls to get_trend()/
+// compute_attribution() (employment_type='Formal' and 'Contract'), never a
+// third server-side mode - this just describes, for rendering purposes,
+// which of those calls (plus the always-available "全部" call) apply.
+function trendSeriesList(employmentTypeMode, data) {
+  if (employmentTypeMode === 'compare') {
+    return [
+      { key: 'Formal', typeLabel: t('cat.employment_type.formal_short'), rows: data.Formal || [], dashed: false },
+      { key: 'Contract', typeLabel: t('cat.employment_type.contract_short'), rows: data.Contract || [], dashed: true },
+    ];
+  }
+  const typeLabel = employmentTypeMode === 'Formal' ? t('cat.employment_type.formal_short') : employmentTypeMode === 'Contract' ? t('cat.employment_type.contract_short') : t('cat.employment_type.all');
+  return [{ key: 'all', typeLabel, rows: data.all || [], dashed: false }];
+}
 
+function renderTrend(employmentTypeMode, data) {
+  const series = trendSeriesList(employmentTypeMode, data);
+  const months = Array.from(new Set(series.flatMap((s) => s.rows.map((r) => r.month)))).sort();
+  const rowsByMonthPerSeries = series.map((s) => Object.fromEntries(s.rows.map((r) => [r.month, r])));
+
+  const datasets = [];
+  series.forEach((s, si) => {
+    const byMonth = rowsByMonthPerSeries[si];
+    const suffix = employmentTypeMode === 'compare' ? `（${s.typeLabel}）` : '';
+    datasets.push({
+      label: `${t('trend.chart.hr_cost')}${suffix}`,
+      data: months.map((m) => (byMonth[m] ? byMonth[m].total_hr_cost : null)),
+      borderColor: '#2f6fed',
+      backgroundColor: 'rgba(47,111,237,0.15)',
+      yAxisID: 'y',
+      tension: 0.25,
+      borderDash: s.dashed ? [6, 4] : [],
+      spanGaps: true,
+    });
+    datasets.push({
+      label: `${t('trend.chart.headcount')}${suffix}`,
+      data: months.map((m) => (byMonth[m] ? byMonth[m].headcount : null)),
+      borderColor: '#1e9e63',
+      backgroundColor: 'rgba(30,158,99,0.15)',
+      yAxisID: 'y1',
+      tension: 0.25,
+      borderDash: s.dashed ? [6, 4] : [],
+      spanGaps: true,
+    });
+  });
+
+  const tbody = document.querySelector('#trendTable tbody');
+  const bodyRows = [];
+  months.forEach((m) => {
+    series.forEach((s, si) => {
+      const row = rowsByMonthPerSeries[si][m];
+      if (!row) return;
+      bodyRows.push(`<tr><td>${m}</td><td>${s.typeLabel}</td><td>${fmtInt(row.headcount)}</td><td>${fmtMoney(row.total_hr_cost)}</td><td>${fmtMoney(row.avg_hr_cost)}</td></tr>`);
+    });
+  });
+  tbody.innerHTML = bodyRows.join('');
+
+  const ctx = document.getElementById('trendChart');
   if (trendChart) trendChart.destroy();
   trendChart = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: t('trend.chart.hr_cost'), data: costData, borderColor: '#2f6fed', backgroundColor: 'rgba(47,111,237,0.15)', yAxisID: 'y', tension: 0.25 },
-        { label: t('trend.chart.headcount'), data: headcountData, borderColor: '#1e9e63', backgroundColor: 'rgba(30,158,99,0.15)', yAxisID: 'y1', tension: 0.25 },
-      ],
-    },
+    data: { labels: months, datasets },
     options: {
       scales: {
         y: { position: 'left', title: { display: true, text: 'HR Cost (₦)' } },
@@ -415,15 +462,14 @@ function renderTrend(rows) {
       },
     },
   });
-
-  const tbody = document.querySelector('#trendTable tbody');
-  tbody.innerHTML = rows
-    .map((r) => `<tr><td>${r.month}</td><td>${fmtInt(r.headcount)}</td><td>${fmtMoney(r.total_hr_cost)}</td><td>${fmtMoney(r.avg_hr_cost)}</td></tr>`)
-    .join('');
 }
 
 function currentTrendMode() {
   return document.querySelector('input[name="trendMode"]:checked').value;
+}
+
+function currentTrendEmploymentTypeMode() {
+  return document.getElementById('trendEmploymentType').value; // 'all' | 'Formal' | 'Contract' | 'compare'
 }
 
 function updateTrendModeVisibility() {
@@ -448,17 +494,38 @@ function initTrendTab() {
     const start = document.getElementById('trendStart').value;
     const end = document.getElementById('trendEnd').value;
 
+    const employmentTypeMode = currentTrendEmploymentTypeMode();
+
     try {
       if (currentTrendMode() === 'trend') {
-        const rows = await apiPost('/api/trend', { department, entity, start_month: start || null, end_month: end || null });
-        renderTrend(rows);
+        const baseParams = { department, entity, start_month: start || null, end_month: end || null };
+        let data;
+        if (employmentTypeMode === 'compare') {
+          const [formal, contract] = await Promise.all([
+            apiPost('/api/trend', { ...baseParams, employment_type: 'Formal' }),
+            apiPost('/api/trend', { ...baseParams, employment_type: 'Contract' }),
+          ]);
+          data = { Formal: formal, Contract: contract };
+        } else {
+          data = { all: await apiPost('/api/trend', { ...baseParams, employment_type: employmentTypeMode === 'all' ? null : employmentTypeMode }) };
+        }
+        renderTrend(employmentTypeMode, data);
       } else {
         if (!start || !end || start >= end) {
           errEl.textContent = t('trend.compare_order_error');
           return;
         }
-        const r = await apiPost('/api/attribution', { department, entity, prev_month: start, cur_month: end });
-        renderAttribution(r);
+        const baseParams = { department, entity, prev_month: start, cur_month: end };
+        if (employmentTypeMode === 'compare') {
+          const [formal, contract] = await Promise.all([
+            apiPost('/api/attribution', { ...baseParams, employment_type: 'Formal' }),
+            apiPost('/api/attribution', { ...baseParams, employment_type: 'Contract' }),
+          ]);
+          renderAttributionCompare(formal, contract);
+        } else {
+          const r = await apiPost('/api/attribution', { ...baseParams, employment_type: employmentTypeMode === 'all' ? null : employmentTypeMode });
+          renderAttribution(r);
+        }
       }
     } catch (e) {
       errEl.textContent = e.message;
@@ -906,6 +973,32 @@ function flatItemLabel(item) {
 
 function renderAttribution(r) {
   const el = document.getElementById('attrResult');
+  el.innerHTML = '';
+  renderAttributionInto(el, r);
+}
+
+// 用工类型 compare mode reuses the exact same rendering logic twice into two
+// side-by-side containers instead of a parallel "compare" implementation -
+// same pattern as trendSeriesList()/catSeriesList() above.
+function renderAttributionCompare(formal, contract) {
+  const el = document.getElementById('attrResult');
+  el.innerHTML = `
+    <div class="row" style="align-items:flex-start;gap:24px;">
+      <div style="flex:1;min-width:0;">
+        <h4>${t('cat.employment_type.formal_short')}</h4>
+        <div id="attrResultFormal"></div>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <h4>${t('cat.employment_type.contract_short')}</h4>
+        <div id="attrResultContract"></div>
+      </div>
+    </div>
+  `;
+  renderAttributionInto(document.getElementById('attrResultFormal'), formal);
+  renderAttributionInto(document.getElementById('attrResultContract'), contract);
+}
+
+function renderAttributionInto(el, r) {
   const movers = (list, sign) =>
     list.map((m) => `<li>${m.name || t('common.unknown')}（${m.job_grade || '-'}）: ${sign}${fmtMoney(Math.abs(m.hr_cost))}</li>`).join('');
 

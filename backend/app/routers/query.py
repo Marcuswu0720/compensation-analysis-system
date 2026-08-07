@@ -25,19 +25,26 @@ def meta(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     }
 
 
+def _validate_employment_type(employment_type: str | None) -> None:
+    if employment_type not in (None, "Formal", "Contract"):
+        raise HTTPException(status_code=400, detail="employment_type 只能是 Formal、Contract 或不填（表示全部）")
+
+
 @router.post("/trend")
 def trend(payload: TrendRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    _validate_employment_type(payload.employment_type)
     scope = get_allowed_scope(db, user)
     department, entity = resolve_requested_filters(scope, payload.department, payload.entity)
     months = None
     if payload.start_month and payload.end_month:
         available = list_available_months(db)
         months = [m for m in available if payload.start_month <= m <= payload.end_month]
-    return get_trend(db, months=months, department=department, entity=entity, scope_rules=scope.rules)
+    return get_trend(db, months=months, department=department, entity=entity, scope_rules=scope.rules, employment_type=payload.employment_type)
 
 
 @router.post("/attribution")
 def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    _validate_employment_type(payload.employment_type)
     scope = get_allowed_scope(db, user)
     department, entity = resolve_requested_filters(scope, payload.department, payload.entity)
     result = compute_attribution(
@@ -47,6 +54,7 @@ def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user
         department=department,
         entity=entity,
         scope_rules=scope.rules,
+        employment_type=payload.employment_type,
     )
     result_dict = asdict(result)
     result_dict["flat_items"] = [asdict(i) for i in flatten_attribution(result)]
@@ -62,8 +70,7 @@ def attribution(payload: AttributionRequest, db: Session = Depends(get_db), user
 def category_trend(payload: CategoryTrendRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if not payload.categories:
         raise HTTPException(status_code=400, detail="请至少选择一个薪资类目")
-    if payload.employment_type not in (None, "Formal", "Contract"):
-        raise HTTPException(status_code=400, detail="employment_type 只能是 Formal、Contract 或不填（表示全部）")
+    _validate_employment_type(payload.employment_type)
     scope = get_allowed_scope(db, user)
     department, entity = resolve_requested_filters(scope, payload.department, payload.entity)
     months = None

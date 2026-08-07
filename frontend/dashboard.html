@@ -109,6 +109,15 @@
           <label data-i18n="trend.end_month">结束月份</label>
           <select id="trendEnd"></select>
         </div>
+        <div>
+          <label data-i18n="cat.employment_type">用工类型</label>
+          <select id="trendEmploymentType">
+            <option value="all" data-i18n="cat.employment_type.all">全部</option>
+            <option value="Formal" data-i18n="cat.employment_type.formal">仅正式工</option>
+            <option value="Contract" data-i18n="cat.employment_type.contract">仅合同工</option>
+            <option value="compare" data-i18n="cat.employment_type.compare">正式工 vs 合同工</option>
+          </select>
+        </div>
         <div style="flex:0;">
           <button id="trendQueryBtn" data-i18n="common.query">查询</button>
         </div>
@@ -127,7 +136,7 @@
     <div class="card" style="margin-top:16px;" id="trendTrendResult">
       <canvas id="trendChart" height="90"></canvas>
       <table id="trendTable">
-        <thead><tr><th data-i18n="trend.table.month">月份</th><th data-i18n="trend.table.headcount">在职人数（含当月内离职）</th><th data-i18n="trend.table.total_hr_cost">总HR Cost (₦)</th><th data-i18n="trend.table.avg_hr_cost">人均HR Cost (₦)</th></tr></thead>
+        <thead><tr><th data-i18n="trend.table.month">月份</th><th data-i18n="cat.employment_type">用工类型</th><th data-i18n="trend.table.headcount">在职人数（含当月内离职）</th><th data-i18n="trend.table.total_hr_cost">总HR Cost (₦)</th><th data-i18n="trend.table.avg_hr_cost">人均HR Cost (₦)</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
