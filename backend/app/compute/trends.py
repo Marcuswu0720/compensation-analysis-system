@@ -132,11 +132,18 @@ def get_trend(
     department: ScopeValue = None,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
+    employment_type: str | None = None,
 ) -> list[dict]:
     # Headcount/cost here is a "cash flow" measure: everyone who has a payroll
     # record for the month (including someone who resigned mid-month but still
     # got a partial paycheck), matching the validated reference calculation -
     # NOT a snapshot of who is active as of today. See PRD §2.2.
+    #
+    # `employment_type` ('Formal' | 'Contract' | None for both combined) is a
+    # plain filter, same as compute/categories.py's get_categories_trend -
+    # "对比 Formal vs Contract" on the 趋势查询 page is just calling this
+    # function twice with each value and combining client-side, not a third
+    # mode this function needs to know about.
     q = db.query(
         MonthlyEmployeeSnapshot.month,
         func.count(MonthlyEmployeeSnapshot.id).label("headcount"),
@@ -148,13 +155,15 @@ def get_trend(
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
+    if employment_type:
+        q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
 
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
     # Bonus/backpay files uploaded standalone (salary_type != 'base') add cost
     # on top of the base batch for the same month without creating headcount -
     # see ingestion/commit.py for why these live in a separate table.
-    supplemental = get_supplemental_cost_by_month(db, months, department, entity, scope_rules)
+    supplemental = get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type)
     base_rows = {month: (headcount, total_hr_cost or 0.0) for month, headcount, total_hr_cost in q.all()}
 
     # A month can have supplemental data uploaded before (or reassigned without)

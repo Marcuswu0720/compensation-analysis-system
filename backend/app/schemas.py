@@ -21,6 +21,7 @@ class TrendRequest(BaseModel):
     entity: str | None = None
     start_month: str | None = None
     end_month: str | None = None
+    employment_type: str | None = None  # None (全部) | "Formal" | "Contract"
 
 
 class AttributionRequest(BaseModel):
@@ -28,6 +29,7 @@ class AttributionRequest(BaseModel):
     entity: str | None = None
     prev_month: str
     cur_month: str
+    employment_type: str | None = None  # None (全部) | "Formal" | "Contract"
 
 
 class ReassignMonthRequest(BaseModel):

@@ -1,5 +1,6 @@
 from app.compute.attribution import compute_attribution
 from app.compute.categories import compare_departments_by_category, get_categories_trend, get_cost_composition
+from app.compute.trends import get_trend
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
 
@@ -212,3 +213,36 @@ def test_get_categories_trend_employment_type_filter_combines_with_per_capita(db
     assert row["headcount"] == 2
     assert row["per_capita"]["basic_salary_actual"] == 90000
     assert row["median"]["basic_salary_actual"] == 90000
+
+
+def test_get_trend_employment_type_filter(db_session):
+    """趋势查询页面新增的用工类型筛选 - 复用同一个 get_trend()，不是新接口。
+    Formal: Alice (hr_cost 130000) + Carol (hr_cost 98000). Contract: Bob only."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+
+    formal = get_trend(db_session, months=["2026-01"], employment_type="Formal")
+    assert formal[0]["headcount"] == 2
+    assert formal[0]["total_hr_cost"] == 130000 + 98000
+
+    contract = get_trend(db_session, months=["2026-01"], employment_type="Contract")
+    assert contract[0]["headcount"] == 1
+    assert contract[0]["total_hr_cost"] == 59000
+
+    combined = get_trend(db_session, months=["2026-01"])
+    assert combined[0]["headcount"] == 3
+    assert combined[0]["total_hr_cost"] == 130000 + 98000 + 59000
+
+
+def test_compute_attribution_employment_type_filter(db_session):
+    """两点比较模式的用工类型筛选 - same compute_attribution(), called with a
+    different employment_type instead of a parallel implementation."""
+    _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
+    _confirm(db_session, "2026-03", MONTH2_EMPLOYEES)
+
+    formal = compute_attribution(db_session, "2026-01", "2026-03", employment_type="Formal")
+    assert formal.stayers_count == 2  # Alice + Carol only, Bob excluded
+    assert formal.stayers_delta == 15000  # Alice's +5000 perf bonus + Carol's +10000 basic
+
+    contract = compute_attribution(db_session, "2026-01", "2026-03", employment_type="Contract")
+    assert contract.stayers_count == 1  # Bob only
+    assert contract.stayers_delta == 5000  # Bob's basic salary raise

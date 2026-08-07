@@ -124,16 +124,27 @@ def _fetch_scope(
     department: ScopeValue,
     entity: ScopeValue,
     scope_rules: list[ScopeRule] | None,
+    employment_type: str | None = None,
 ) -> tuple[dict[str, _ScopedEmployee], float]:
     # Same "everyone with a payroll record that month" scope as get_trend - see
     # the comment there. A staff_id present in month M but absent in month M+1
     # is exactly what makes them a "leaver" for attribution purposes.
+    #
+    # `employment_type` is the same plain Formal/Contract filter get_trend()
+    # and get_categories_trend() already support - "对比 Formal vs Contract"
+    # is compute_attribution() called twice, not a mode this function needs
+    # to know about. Also has to filter the supplemental query below the
+    # same way, or a bonus/backpay row belonging to the OTHER employment
+    # type would wrongly fall into `unattributed` instead of being excluded
+    # from this scope entirely.
     q = db.query(MonthlyEmployeeSnapshot).filter(
         MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
     )
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
+    if employment_type:
+        q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
     scoped = {
         row.staff_id: _ScopedEmployee(
             staff_id=row.staff_id,
@@ -157,6 +168,15 @@ def _fetch_scope(
     supq = apply_scope_filter(supq, SupplementalPaySnapshot.department1, department)
     supq = apply_scope_filter(supq, SupplementalPaySnapshot.entity, entity)
     supq = apply_permission_scope(supq, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
+    if employment_type:
+        # Same caveat as get_supplemental_cost_by_month's employment_type
+        # filter (see compute/trends.py): a 补发批次 (backpay) row's own
+        # employment_type column is always NULL (that loose upload shape
+        # never captures it, unlike a 奖金批次 row - see ingestion/loader.py's
+        # _stage_supplemental vs _stage_bonus_batch), so filtering here drops
+        # backpay rows out of any employment-type-scoped view entirely rather
+        # than guessing which type they belonged to.
+        supq = supq.filter(SupplementalPaySnapshot.employment_type == employment_type)
 
     unattributed = 0.0
     for row in supq.all():
@@ -302,9 +322,10 @@ def compute_attribution(
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
     top_n: int = 5,
+    employment_type: str | None = None,
 ) -> AttributionResult:
-    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity, scope_rules)
-    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity, scope_rules)
+    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity, scope_rules, employment_type)
+    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity, scope_rules, employment_type)
 
     prev_ids = set(prev_emps.keys())
     cur_ids = set(cur_emps.keys())
