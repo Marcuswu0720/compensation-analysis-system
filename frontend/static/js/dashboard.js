@@ -19,6 +19,7 @@ let currentBatchId = null;
 let trendChart = null;
 let currentUserRole = null;
 let metaCategories = []; // [{value, label}] - cached from /api/meta, see populateMeta()
+let department2ByDepartment1 = {}; // department1 -> [department2, ...] - cached from /api/meta, see populateMeta()
 
 // ---------- shell: tabs + whoami ----------
 async function initShell() {
@@ -273,10 +274,44 @@ function initUploadTab() {
   loadUploadHistory();
 }
 
+// 一级部门 -> 二级部门 级联下拉: dept2 select stays disabled/empty until a
+// single dept1 is picked, then repopulates from department2ByDepartment1
+// and enables - "强制需要先选择一级部门，才能选择对应下面的二级部门".
+// DEPT2_CASCADE_PAIRS is walked twice: once at startup (initDept2Cascades)
+// to attach each pair's dept1 "change" listener exactly once, and once on
+// every populateMeta() refresh (department2ByDepartment1 can change after
+// a new upload) to resync the currently-selected dept1's options without
+// re-attaching listeners - attaching inside populateMeta itself would stack
+// a new duplicate listener on every refresh, since that function runs many
+// times over the page's life (after every upload confirm/delete, etc.).
+const DEPT2_CASCADE_PAIRS = [
+  ['trendDept', 'trendDept2'],
+  ['catTrendDept', 'catTrendDept2'],
+  ['compDept', 'compDept2'],
+];
+
+function syncDept2Options(dept1Id, dept2Id) {
+  const dept1El = document.getElementById(dept1Id);
+  const dept2El = document.getElementById(dept2Id);
+  const dept1 = dept1El.value;
+  const previous = dept2El.value;
+  const options = dept1 ? department2ByDepartment1[dept1] || [] : [];
+  dept2El.innerHTML = `<option value="">${t('common.all')}</option>` + options.map((v) => `<option value="${v}">${v}</option>`).join('');
+  dept2El.disabled = !dept1;
+  dept2El.value = options.includes(previous) ? previous : '';
+}
+
+function initDept2Cascades() {
+  DEPT2_CASCADE_PAIRS.forEach(([dept1Id, dept2Id]) => {
+    document.getElementById(dept1Id).addEventListener('change', () => syncDept2Options(dept1Id, dept2Id));
+  });
+}
+
 // ---------- meta (departments / entities / months) ----------
 async function populateMeta() {
   const meta = await apiJson('/api/meta');
   metaCategories = meta.categories;
+  department2ByDepartment1 = meta.department2_by_department1 || {};
   const fillSelect = (id, values, withEmpty) => {
     const el = document.getElementById(id);
     const current = el.value;
@@ -311,9 +346,11 @@ async function populateMeta() {
 
   fillSelect('catTrendDept', meta.departments, true);
   fillSelect('catTrendEntity', meta.entities, true);
+  fillSelect('catCompareDept', meta.departments, true);
   fillSelect('catCompareEntity', meta.entities, true);
   fillSelect('compDept', meta.departments, true);
   fillSelect('compEntity', meta.entities, true);
+  DEPT2_CASCADE_PAIRS.forEach(([dept1Id, dept2Id]) => syncDept2Options(dept1Id, dept2Id));
   fillSelect('catTrendStart', meta.months, false);
   fillSelect('catTrendEnd', meta.months, false);
   fillSelect('catCompareMonth', meta.months, false);
@@ -490,6 +527,7 @@ function initTrendTab() {
     const errEl = document.getElementById('trendError');
     errEl.textContent = '';
     const department = document.getElementById('trendDept').value || null;
+    const department2 = document.getElementById('trendDept2').value || null;
     const entity = document.getElementById('trendEntity').value || null;
     const start = document.getElementById('trendStart').value;
     const end = document.getElementById('trendEnd').value;
@@ -498,7 +536,7 @@ function initTrendTab() {
 
     try {
       if (currentTrendMode() === 'trend') {
-        const baseParams = { department, entity, start_month: start || null, end_month: end || null };
+        const baseParams = { department, department2, entity, start_month: start || null, end_month: end || null };
         let data;
         if (employmentTypeMode === 'compare') {
           const [formal, contract] = await Promise.all([
@@ -515,7 +553,7 @@ function initTrendTab() {
           errEl.textContent = t('trend.compare_order_error');
           return;
         }
-        const baseParams = { department, entity, prev_month: start, cur_month: end };
+        const baseParams = { department, department2, entity, prev_month: start, cur_month: end };
         if (employmentTypeMode === 'compare') {
           const [formal, contract] = await Promise.all([
             apiPost('/api/attribution', { ...baseParams, employment_type: 'Formal' }),
@@ -864,6 +902,7 @@ function initCategoryTab() {
     const baseParams = {
       categories,
       department: document.getElementById('catTrendDept').value || null,
+      department2: document.getElementById('catTrendDept2').value || null,
       entity: document.getElementById('catTrendEntity').value || null,
       start_month: start || null,
       end_month: end || null,
@@ -908,6 +947,7 @@ function initCategoryTab() {
       category: document.getElementById('catCompareCategory').value,
       month: document.getElementById('catCompareMonth').value,
       entity: document.getElementById('catCompareEntity').value || null,
+      department: document.getElementById('catCompareDept').value || null,
     });
     document.querySelector('#catCompareTable tbody').innerHTML = rows
       .map(
@@ -921,6 +961,7 @@ function initCategoryTab() {
     const r = await apiPost('/api/composition', {
       month: document.getElementById('compMonth').value,
       department: document.getElementById('compDept').value || null,
+      department2: document.getElementById('compDept2').value || null,
       entity: document.getElementById('compEntity').value || null,
     });
     renderComposition(r);
@@ -1322,5 +1363,6 @@ function initPermissionsTab() {
   initExportTab();
   initChatTab();
   initPermissionsTab();
+  initDept2Cascades();
   await populateMeta();
 })();

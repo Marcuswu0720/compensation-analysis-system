@@ -91,6 +91,7 @@ const TRANSLATIONS = {
     'upload.stat.total_amount': '总金额',
 
     'trend.dept': '部门（不选=全公司）',
+    'trend.dept2': '二级部门（需先选一级部门）',
     'trend.entity': '实体（不选=全部）',
     'trend.start_month': '起始月份',
     'trend.end_month': '结束月份',
@@ -155,6 +156,8 @@ const TRANSLATIONS = {
     'cat.compare_title': '部门间横向对比',
     'cat.category_label': '薪资类目',
     'cat.month': '月份',
+    'cat.compare.dept1': '一级部门（不选=对比各一级部门）',
+    'cat.compare.drilldown_hint': '选定一级部门后，下方表格会从"对比各一级部门"切换成"对比该一级部门下的各二级部门"。',
     'cat.compare.table.department': '部门',
     'cat.compare.table.headcount': '人数',
     'cat.compare.table.category_total': '类目总额 (₦)',
@@ -342,6 +345,7 @@ const TRANSLATIONS = {
     'upload.stat.total_amount': 'Total amount',
 
     'trend.dept': 'Department (blank = whole company)',
+    'trend.dept2': 'Sub-department (pick a Department first)',
     'trend.entity': 'Entity (blank = all)',
     'trend.start_month': 'Start month',
     'trend.end_month': 'End month',
@@ -406,6 +410,8 @@ const TRANSLATIONS = {
     'cat.compare_title': 'Department Comparison',
     'cat.category_label': 'Salary Category',
     'cat.month': 'Month',
+    'cat.compare.dept1': 'Department (blank = compare all departments)',
+    'cat.compare.drilldown_hint': 'Once a Department is picked, the table below switches from "compare departments" to "compare the sub-departments within that department".',
     'cat.compare.table.department': 'Department',
     'cat.compare.table.headcount': 'Headcount',
     'cat.compare.table.category_total': 'Category Total (₦)',
