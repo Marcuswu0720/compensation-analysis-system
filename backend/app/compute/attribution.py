@@ -125,6 +125,7 @@ def _fetch_scope(
     entity: ScopeValue,
     scope_rules: list[ScopeRule] | None,
     employment_type: str | None = None,
+    department2: str | None = None,
 ) -> tuple[dict[str, _ScopedEmployee], float]:
     # Same "everyone with a payroll record that month" scope as get_trend - see
     # the comment there. A staff_id present in month M but absent in month M+1
@@ -145,6 +146,8 @@ def _fetch_scope(
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     if employment_type:
         q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
+    if department2:
+        q = q.filter(MonthlyEmployeeSnapshot.department2 == department2)
     scoped = {
         row.staff_id: _ScopedEmployee(
             staff_id=row.staff_id,
@@ -177,6 +180,11 @@ def _fetch_scope(
         # backpay rows out of any employment-type-scoped view entirely rather
         # than guessing which type they belonged to.
         supq = supq.filter(SupplementalPaySnapshot.employment_type == employment_type)
+    if department2:
+        # Same caveat again for department2 - a backpay row's department2 is
+        # always NULL too, so it drops out of scope here rather than being
+        # guessed at.
+        supq = supq.filter(SupplementalPaySnapshot.department2 == department2)
 
     unattributed = 0.0
     for row in supq.all():
@@ -323,9 +331,10 @@ def compute_attribution(
     scope_rules: list[ScopeRule] | None = None,
     top_n: int = 5,
     employment_type: str | None = None,
+    department2: str | None = None,
 ) -> AttributionResult:
-    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity, scope_rules, employment_type)
-    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity, scope_rules, employment_type)
+    prev_emps, unattributed_prev = _fetch_scope(db, prev_month, department, entity, scope_rules, employment_type, department2)
+    cur_emps, unattributed_cur = _fetch_scope(db, cur_month, department, entity, scope_rules, employment_type, department2)
 
     prev_ids = set(prev_emps.keys())
     cur_ids = set(cur_emps.keys())

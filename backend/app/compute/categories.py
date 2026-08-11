@@ -116,7 +116,7 @@ def _column(category: str):
     return getattr(MonthlyEmployeeSnapshot, category)
 
 
-def _base_query(db: Session, department: ScopeValue, entity: ScopeValue, scope_rules, months, employment_type):
+def _base_query(db: Session, department: ScopeValue, entity: ScopeValue, scope_rules, months, employment_type, department2: str | None = None):
     q = db.query(MonthlyEmployeeSnapshot).filter(MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
     if months:
         q = q.filter(MonthlyEmployeeSnapshot.month.in_(months))
@@ -125,6 +125,8 @@ def _base_query(db: Session, department: ScopeValue, entity: ScopeValue, scope_r
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     if employment_type:
         q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
+    if department2:
+        q = q.filter(MonthlyEmployeeSnapshot.department2 == department2)
     return q
 
 
@@ -137,6 +139,7 @@ def get_categories_trend(
     scope_rules: list[ScopeRule] | None = None,
     employment_type: str | None = None,
     per_capita: bool = False,
+    department2: str | None = None,
 ) -> list[dict]:
     """PRD V1.7 §3.1: 薪资类目页面从单选改为多选 - one query returns every
     requested category's monthly total side by side (same headcount
@@ -161,9 +164,13 @@ def get_categories_trend(
         this path queries raw rows instead of a grouped aggregate; when
         `per_capita` is False the lighter grouped-SUM query below is used
         instead, unchanged from V1.7).
+
+    `department2` narrows further within `department` - see get_trend()'s
+    docstring in compute/trends.py for why it's just a plain filter, not a
+    permission boundary.
     """
     if per_capita:
-        return _get_categories_trend_per_capita(db, categories, months, department, entity, scope_rules, employment_type)
+        return _get_categories_trend_per_capita(db, categories, months, department, entity, scope_rules, employment_type, department2)
 
     real_categories = [c for c in categories if c not in SUPPLEMENTAL_CATEGORIES]
     cols = [_column(c) for c in real_categories]
@@ -179,6 +186,8 @@ def get_categories_trend(
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
     if employment_type:
         q = q.filter(MonthlyEmployeeSnapshot.employment_type == employment_type)
+    if department2:
+        q = q.filter(MonthlyEmployeeSnapshot.department2 == department2)
     q = q.group_by(MonthlyEmployeeSnapshot.month).order_by(MonthlyEmployeeSnapshot.month)
 
     # Every requested category's supplemental slice (see _supplemental_spec)
@@ -189,7 +198,9 @@ def get_categories_trend(
     for cat in categories:
         spec = _supplemental_spec(cat)
         if spec is not None:
-            supplemental_by_category[cat] = get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type, **spec)
+            supplemental_by_category[cat] = get_supplemental_cost_by_month(
+                db, months, department, entity, scope_rules, employment_type, department2=department2, **spec
+            )
 
     base_by_month = {}
     for row in q.all():
@@ -217,7 +228,7 @@ def get_categories_trend(
     return results
 
 
-def _get_categories_trend_per_capita(db, categories, months, department, entity, scope_rules, employment_type) -> list[dict]:
+def _get_categories_trend_per_capita(db, categories, months, department, entity, scope_rules, employment_type, department2=None) -> list[dict]:
     """PRD V1.9 §2.1: 人均 = 类目总额 ÷ 该范围内当月在职总人数（跟 get_trend
     的"在职人数（含当月内离职）"口径一致），拆用工类型时分母各自独立计算，
     不共用总分母 - which falls out naturally here since `employment_type`
@@ -245,7 +256,7 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
     categories' medians."""
     real_categories = [c for c in categories if c not in SUPPLEMENTAL_CATEGORIES]
     cols = [_column(c) for c in real_categories]
-    q = _base_query(db, department, entity, scope_rules, months, employment_type).with_entities(MonthlyEmployeeSnapshot.month, *cols)
+    q = _base_query(db, department, entity, scope_rules, months, employment_type, department2).with_entities(MonthlyEmployeeSnapshot.month, *cols)
     rows = q.order_by(MonthlyEmployeeSnapshot.month).all()
 
     by_month: dict[str, list] = {}
@@ -260,10 +271,12 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
             continue
         if cat in SUPPLEMENTAL_CATEGORIES:
             supplemental_recipient_values[cat] = get_supplemental_amounts_by_month(
-                db, months, department, entity, scope_rules, employment_type, **spec
+                db, months, department, entity, scope_rules, employment_type, department2=department2, **spec
             )
         else:
-            supplemental_by_category[cat] = get_supplemental_cost_by_month(db, months, department, entity, scope_rules, employment_type, **spec)
+            supplemental_by_category[cat] = get_supplemental_cost_by_month(
+                db, months, department, entity, scope_rules, employment_type, department2=department2, **spec
+            )
 
     all_months = set(by_month)
     for by_month_totals in supplemental_by_category.values():
@@ -300,6 +313,9 @@ def _get_categories_trend_per_capita(db, categories, months, department, entity,
     return results
 
 
+UNLABELED_DEPARTMENT2 = "(未标注二级部门)"
+
+
 def _supplemental_by_dept(
     db: Session,
     month: str,
@@ -308,8 +324,15 @@ def _supplemental_by_dept(
     pay_type: str | None = None,
     category: str | None = None,
     uncategorized: bool = False,
+    department1: str | None = None,
+    group_by_department2: bool = False,
 ) -> dict[str | None, float]:
-    q = db.query(SupplementalPaySnapshot.department1, func.sum(SupplementalPaySnapshot.amount)).filter(
+    """`department1`/`group_by_department2` implement compare_departments_
+    by_category's drill-down mode (see its docstring) - narrow to one
+    department1 and group by department2 within it, instead of the default
+    group-by-department1 across the whole scope."""
+    group_col = SupplementalPaySnapshot.department2 if group_by_department2 else SupplementalPaySnapshot.department1
+    q = db.query(group_col, func.sum(SupplementalPaySnapshot.amount)).filter(
         SupplementalPaySnapshot.month == month, SupplementalPaySnapshot.is_deleted == False  # noqa: E712
     )
     if pay_type:
@@ -318,9 +341,17 @@ def _supplemental_by_dept(
         q = q.filter(SupplementalPaySnapshot.category.is_(None))
     elif category:
         q = q.filter(SupplementalPaySnapshot.category == category)
+    if department1:
+        q = q.filter(SupplementalPaySnapshot.department1 == department1)
     q = apply_scope_filter(q, SupplementalPaySnapshot.entity, entity)
+    # Permission is always an entity/department1 boundary (see scope.py) -
+    # still checked against department1 even when grouping by department2.
     q = apply_permission_scope(q, SupplementalPaySnapshot.entity, SupplementalPaySnapshot.department1, scope_rules)
-    return {dept: total or 0.0 for dept, total in q.group_by(SupplementalPaySnapshot.department1).all()}
+    result: dict[str | None, float] = {}
+    for dept, total in q.group_by(group_col).all():
+        key = (dept or UNLABELED_DEPARTMENT2) if group_by_department2 else dept
+        result[key] = result.get(key, 0.0) + (total or 0.0)
+    return result
 
 
 def compare_departments_by_category(
@@ -329,39 +360,69 @@ def compare_departments_by_category(
     month: str,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
+    department: str | None = None,
 ) -> list[dict]:
-    hr_cost_q = db.query(MonthlyEmployeeSnapshot.department1, func.sum(MonthlyEmployeeSnapshot.hr_cost)).filter(
-        MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
+    """`department`: when given, drills down FROM comparing department1s
+    (the default) TO comparing the department2s within that one department1
+    - the same "先选一级部门才能细化" cascading UX the trend/category-trend
+    filter rows use, applied to the one view here whose whole point is
+    comparing across departments rather than filtering down to one. A
+    department2 that's blank/unset for a given row groups under
+    UNLABELED_DEPARTMENT2 rather than silently vanishing - department2 has
+    no default-label backfill at ingestion time the way department1 does
+    (see ingestion/normalize.py), so a real chunk of employees can genuinely
+    have no department2 at all."""
+    drilldown = department is not None
+    group_col = MonthlyEmployeeSnapshot.department2 if drilldown else MonthlyEmployeeSnapshot.department1
+
+    def _dept_key(raw):
+        return (raw or UNLABELED_DEPARTMENT2) if drilldown else raw
+
+    def _scoped(q):
+        if drilldown:
+            q = q.filter(MonthlyEmployeeSnapshot.department1 == department)
+        q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
+        return apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
+
+    hr_cost_q = _scoped(
+        db.query(group_col, func.sum(MonthlyEmployeeSnapshot.hr_cost)).filter(
+            MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
+        )
     )
-    hr_cost_q = apply_scope_filter(hr_cost_q, MonthlyEmployeeSnapshot.entity, entity)
-    hr_cost_q = apply_permission_scope(hr_cost_q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
-    hr_cost_by_dept = {dept: total or 0.0 for dept, total in hr_cost_q.group_by(MonthlyEmployeeSnapshot.department1).all()}
+    hr_cost_by_dept: dict[str | None, float] = {}
+    for dept, total in hr_cost_q.group_by(group_col).all():
+        key = _dept_key(dept)
+        hr_cost_by_dept[key] = hr_cost_by_dept.get(key, 0.0) + (total or 0.0)
     # pct_of_hr_cost's denominator has to be the same "人力成本合计" figure
     # get_trend()/get_categories_trend() report (base + supplemental,
     # bonus+backpay combined, any category tag) - not just the base-batch sum
     # above, same reasoning as the module docstring's "second reconciliation
     # round".
-    for dept, supp_total in _supplemental_by_dept(db, month, entity, scope_rules).items():
+    supp_dept_kwargs = {"department1": department, "group_by_department2": drilldown}
+    for dept, supp_total in _supplemental_by_dept(db, month, entity, scope_rules, **supp_dept_kwargs).items():
         hr_cost_by_dept[dept] = hr_cost_by_dept.get(dept, 0.0) + supp_total
 
     spec = _supplemental_spec(category)
-    supplemental_total_by_dept = _supplemental_by_dept(db, month, entity, scope_rules, **spec) if spec is not None else {}
+    supplemental_total_by_dept = _supplemental_by_dept(db, month, entity, scope_rules, **(spec or {}), **supp_dept_kwargs) if spec is not None else {}
 
     if category in SUPPLEMENTAL_CATEGORIES:
-        headcount_q = db.query(MonthlyEmployeeSnapshot.department1, func.count(MonthlyEmployeeSnapshot.id)).filter(
-            MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
+        headcount_q = _scoped(
+            db.query(group_col, func.count(MonthlyEmployeeSnapshot.id)).filter(
+                MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
+            )
         )
-        headcount_q = apply_scope_filter(headcount_q, MonthlyEmployeeSnapshot.entity, entity)
-        headcount_q = apply_permission_scope(headcount_q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
-        headcount_by_dept = dict(headcount_q.group_by(MonthlyEmployeeSnapshot.department1).all())
+        headcount_by_dept: dict[str | None, int] = {}
+        for dept, count in headcount_q.group_by(group_col).all():
+            key = _dept_key(dept)
+            headcount_by_dept[key] = headcount_by_dept.get(key, 0) + count
 
         results = []
-        for department, total in supplemental_total_by_dept.items():
-            headcount = headcount_by_dept.get(department, 0)
-            hr_cost = hr_cost_by_dept.get(department, 0.0)
+        for department_key, total in supplemental_total_by_dept.items():
+            headcount = headcount_by_dept.get(department_key, 0)
+            hr_cost = hr_cost_by_dept.get(department_key, 0.0)
             results.append(
                 {
-                    "department": department,
+                    "department": department_key,
                     "headcount": headcount,
                     "total": total,
                     "avg": total / headcount if headcount else 0.0,
@@ -372,20 +433,21 @@ def compare_departments_by_category(
         return results
 
     col = _column(category)
-    q = db.query(
-        MonthlyEmployeeSnapshot.department1,
-        func.count(MonthlyEmployeeSnapshot.id).label("headcount"),
-        func.sum(col).label("total"),
-    ).filter(MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
-    q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
-    q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
-    q = q.group_by(MonthlyEmployeeSnapshot.department1)
+    q = _scoped(
+        db.query(
+            group_col,
+            func.count(MonthlyEmployeeSnapshot.id).label("headcount"),
+            func.sum(col).label("total"),
+        ).filter(MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False)  # noqa: E712
+    )
+    q = q.group_by(group_col)
 
     headcount_by_dept = {}
-    base_total_by_dept = {}
-    for department, headcount, total in q.all():
-        headcount_by_dept[department] = headcount
-        base_total_by_dept[department] = total or 0.0
+    base_total_by_dept: dict[str | None, float] = {}
+    for department_raw, headcount, total in q.all():
+        key = _dept_key(department_raw)
+        headcount_by_dept[key] = headcount_by_dept.get(key, 0) + headcount
+        base_total_by_dept[key] = base_total_by_dept.get(key, 0.0) + (total or 0.0)
 
     # A department can have ONLY a supplemental contribution to this category
     # this month (e.g. hr_cost via a bonus-only department, or a real
@@ -395,16 +457,16 @@ def compare_departments_by_category(
     departments = set(base_total_by_dept) | set(hr_cost_by_dept if category == "hr_cost" else supplemental_total_by_dept)
 
     results = []
-    for department in departments:
-        headcount = headcount_by_dept.get(department, 0)
+    for department_key in departments:
+        headcount = headcount_by_dept.get(department_key, 0)
         if category == "hr_cost":
-            total = hr_cost_by_dept.get(department, 0.0)
+            total = hr_cost_by_dept.get(department_key, 0.0)
         else:
-            total = base_total_by_dept.get(department, 0.0) + supplemental_total_by_dept.get(department, 0.0)
-        hr_cost = hr_cost_by_dept.get(department, 0.0)
+            total = base_total_by_dept.get(department_key, 0.0) + supplemental_total_by_dept.get(department_key, 0.0)
+        hr_cost = hr_cost_by_dept.get(department_key, 0.0)
         results.append(
             {
-                "department": department,
+                "department": department_key,
                 "headcount": headcount,
                 "total": total,
                 "avg": total / headcount if headcount else 0.0,
@@ -421,6 +483,7 @@ def get_cost_composition(
     department: ScopeValue = None,
     entity: ScopeValue = None,
     scope_rules: list[ScopeRule] | None = None,
+    department2: str | None = None,
 ) -> dict:
     q = db.query(*[func.sum(_column(c)) for c in COMPOSITION_REAL_FIELDS], func.sum(MonthlyEmployeeSnapshot.hr_cost)).filter(
         MonthlyEmployeeSnapshot.month == month, MonthlyEmployeeSnapshot.is_deleted == False  # noqa: E712
@@ -428,6 +491,8 @@ def get_cost_composition(
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.department1, department)
     q = apply_scope_filter(q, MonthlyEmployeeSnapshot.entity, entity)
     q = apply_permission_scope(q, MonthlyEmployeeSnapshot.entity, MonthlyEmployeeSnapshot.department1, scope_rules)
+    if department2:
+        q = q.filter(MonthlyEmployeeSnapshot.department2 == department2)
     row = q.first()
     if row is None:
         return {"month": month, "department": department, "entity": entity, "hr_cost": 0.0, "categories": []}
@@ -441,10 +506,12 @@ def get_cost_composition(
     # 而不是悄悄漏掉某个月奖金/补发批次贡献的那部分。
     display_fields = COMPOSITION_REAL_FIELDS + list(SUPPLEMENTAL_CATEGORIES)
     supplemental_totals = {
-        field: get_supplemental_cost_by_month(db, [month], department, entity, scope_rules, **_supplemental_spec(field)).get(month, 0.0)
+        field: get_supplemental_cost_by_month(
+            db, [month], department, entity, scope_rules, department2=department2, **_supplemental_spec(field)
+        ).get(month, 0.0)
         for field in display_fields
     }
-    all_supplemental = get_supplemental_cost_by_month(db, [month], department, entity, scope_rules).get(month, 0.0)
+    all_supplemental = get_supplemental_cost_by_month(db, [month], department, entity, scope_rules, department2=department2).get(month, 0.0)
     hr_cost = base_hr_cost + all_supplemental
 
     categories = []

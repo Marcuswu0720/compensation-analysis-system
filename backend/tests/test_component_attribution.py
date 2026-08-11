@@ -21,6 +21,17 @@ MONTH2_EMPLOYEES = [
     {"staff_id": "E003", "name": "Carol", "role": "formal", "department": "Ops", "basic": 90000, "perf_bonus": 10000, "commission": 0, "overtime": 0, "statutory": 8000},
 ]
 
+# Two department1s (Ops, Sales), Ops split into department2 sub-teams
+# (Ops-A/Ops-B), plus one Ops employee with no department2 at all - for
+# testing the department2 filter/drill-down.
+DEPT2_EMPLOYEES = [
+    {"staff_id": "E010", "name": "Dan", "role": "formal", "department": "Ops", "department2": "Ops-A", "basic": 100000, "perf_bonus": 0, "commission": 0, "overtime": 0, "statutory": 5000},
+    {"staff_id": "E011", "name": "Eve", "role": "formal", "department": "Ops", "department2": "Ops-B", "basic": 60000, "perf_bonus": 0, "commission": 0, "overtime": 0, "statutory": 3000},
+    {"staff_id": "E012", "name": "Fay", "role": "contract", "department": "Ops", "department2": "Ops-A", "basic": 40000, "perf_bonus": 0, "commission": 0, "overtime": 0, "statutory": 2000},
+    {"staff_id": "E013", "name": "Gus", "role": "formal", "department": "Ops", "basic": 20000, "perf_bonus": 0, "commission": 0, "overtime": 0, "statutory": 1000},
+    {"staff_id": "E014", "name": "Hana", "role": "formal", "department": "Sales", "department2": "Sales-A", "basic": 70000, "perf_bonus": 0, "commission": 0, "overtime": 0, "statutory": 4000},
+]
+
 
 def _confirm(db, month, employees):
     batch = stage_upload(db, month=month, file_bytes=build_component_workbook(month, employees), filename=f"{month}.xlsx", uploaded_by="t", salary_type="base")
@@ -246,3 +257,73 @@ def test_compute_attribution_employment_type_filter(db_session):
     contract = compute_attribution(db_session, "2026-01", "2026-03", employment_type="Contract")
     assert contract.stayers_count == 1  # Bob only
     assert contract.stayers_delta == 5000  # Bob's basic salary raise
+
+
+def test_get_trend_department2_filter(db_session):
+    _confirm(db_session, "2026-01", DEPT2_EMPLOYEES)
+
+    ops_a = get_trend(db_session, months=["2026-01"], department="Ops", department2="Ops-A")
+    assert ops_a[0]["headcount"] == 2  # Dan + Fay
+    assert ops_a[0]["total_hr_cost"] == 105000 + 42000
+
+    ops_b = get_trend(db_session, months=["2026-01"], department="Ops", department2="Ops-B")
+    assert ops_b[0]["headcount"] == 1  # Eve only
+    assert ops_b[0]["total_hr_cost"] == 63000
+
+    # Unselected department2 still shows every Ops employee, blank-department2 included.
+    ops_all = get_trend(db_session, months=["2026-01"], department="Ops")
+    assert ops_all[0]["headcount"] == 4  # Dan, Eve, Fay, Gus
+
+
+def test_get_categories_trend_department2_filter(db_session):
+    _confirm(db_session, "2026-01", DEPT2_EMPLOYEES)
+
+    rows = get_categories_trend(db_session, ["basic_salary_actual"], months=["2026-01"], department="Ops", department2="Ops-A")
+    assert rows[0]["headcount"] == 2
+    assert rows[0]["categories"]["basic_salary_actual"] == 100000 + 40000
+
+
+def test_compare_departments_by_category_drilldown_to_department2(db_session):
+    """PRD: 部门间横向对比 needs a department1 selected before it drills down
+    to comparing the department2s within it - passing `department` switches
+    compare_departments_by_category from comparing department1s to comparing
+    department2s scoped to that one department1."""
+    _confirm(db_session, "2026-01", DEPT2_EMPLOYEES)
+
+    # No drilldown: compares department1s (Ops vs Sales).
+    top_level = compare_departments_by_category(db_session, category="hr_cost", month="2026-01")
+    by_dept = {r["department"]: r for r in top_level}
+    assert by_dept["Ops"]["total"] == 105000 + 63000 + 42000 + 21000
+    assert by_dept["Ops"]["headcount"] == 4
+    assert by_dept["Sales"]["total"] == 74000
+
+    # Drilldown into Ops: compares Ops-A vs Ops-B vs the unlabeled bucket.
+    drilled = compare_departments_by_category(db_session, category="hr_cost", month="2026-01", department="Ops")
+    by_dept2 = {r["department"]: r for r in drilled}
+    assert set(by_dept2) == {"Ops-A", "Ops-B", "(未标注二级部门)"}
+    assert by_dept2["Ops-A"]["total"] == 105000 + 42000  # Dan + Fay
+    assert by_dept2["Ops-A"]["headcount"] == 2
+    assert by_dept2["Ops-B"]["total"] == 63000  # Eve
+    assert by_dept2["(未标注二级部门)"]["total"] == 21000  # Gus, no department2
+
+    # Sales isn't touched by the Ops drilldown - only its own department2 would show up.
+    assert "Sales-A" not in by_dept2
+
+    # pct_of_hr_cost is "this group's own total for the selected category as
+    # % of this SAME group's own hr_cost" (unchanged meaning from the non-
+    # drilldown mode, just re-scoped to department2 groups) - verified with
+    # a component category instead of "hr_cost" itself, since comparing
+    # hr_cost against hr_cost is trivially 100% in either mode.
+    drilled_basic = compare_departments_by_category(db_session, category="basic_salary_actual", month="2026-01", department="Ops")
+    ops_a_basic = next(r for r in drilled_basic if r["department"] == "Ops-A")
+    assert ops_a_basic["total"] == 100000 + 40000  # Dan + Fay
+    assert abs(ops_a_basic["pct_of_hr_cost"] - (140000 / 147000 * 100)) < 1e-6
+
+
+def test_get_cost_composition_department2_filter(db_session):
+    _confirm(db_session, "2026-01", DEPT2_EMPLOYEES)
+
+    comp = get_cost_composition(db_session, month="2026-01", department="Ops", department2="Ops-A")
+    assert comp["hr_cost"] == 105000 + 42000
+    basic = next(c for c in comp["categories"] if c["category"] == "basic_salary_actual")
+    assert basic["total"] == 100000 + 40000

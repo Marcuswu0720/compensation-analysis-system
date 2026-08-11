@@ -111,7 +111,9 @@ def build_component_workbook(month: str, employees: list[dict]) -> bytes:
     ingestion/salary_components.py), for testing category breakdowns and the
     attribution component decomposition. `employees` is a list of dicts with
     keys: staff_id, name, role ('formal'|'contract'), department, basic,
-    perf_bonus, commission, overtime, statutory, resigned (optional bool).
+    perf_bonus, commission, overtime, statutory, resigned (optional bool),
+    department2 (optional, defaults to blank - for testing the department2
+    drill-down filter).
     gross/hr_cost are computed here so the identities always hold exactly -
     the mismatch case is tested separately in test_salary_components.py.
     """
@@ -130,6 +132,7 @@ def build_component_workbook(month: str, employees: list[dict]) -> bytes:
                     e["name"],
                     "PalmPay",
                     e["department"],
+                    e.get("department2"),
                     "P1",
                     hr_cost,
                     "2026-01-15" if e.get("resigned") else None,
@@ -148,6 +151,7 @@ def build_component_workbook(month: str, employees: list[dict]) -> bytes:
                     e["name"],
                     "PalmPay",
                     e["department"],
+                    e.get("department2"),
                     "C1",
                     hr_cost,
                     "Active",
@@ -172,6 +176,7 @@ def build_component_workbook(month: str, employees: list[dict]) -> bytes:
                 "Staff Name",
                 "Entity",
                 "Department 1",
+                "Department 2",
                 "Job Grade",
                 "HR Cost",
                 "Resign Date",
@@ -193,6 +198,7 @@ def build_component_workbook(month: str, employees: list[dict]) -> bytes:
                 "Staff Name",
                 "Entity",
                 "Department 1",
+                "Department 2",
                 "Job Grade",
                 "HR Cost",
                 "Exit Date",

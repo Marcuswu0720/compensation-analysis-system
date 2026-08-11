@@ -98,6 +98,10 @@
           <select id="trendDept"><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
+          <label data-i18n="trend.dept2">二级部门（需先选一级部门）</label>
+          <select id="trendDept2" disabled><option value="" data-i18n="common.all">全部</option></select>
+        </div>
+        <div>
           <label data-i18n="trend.entity">实体（不选=全部）</label>
           <select id="trendEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
@@ -164,6 +168,10 @@
         <div>
           <label data-i18n="trend.dept">部门（不选=全公司）</label>
           <select id="catTrendDept"><option value="" data-i18n="common.all">全部</option></select>
+        </div>
+        <div>
+          <label data-i18n="trend.dept2">二级部门（需先选一级部门）</label>
+          <select id="catTrendDept2" disabled><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
           <label data-i18n="trend.entity">实体（不选=全部）</label>
@@ -252,6 +260,10 @@
           <select id="catCompareMonth"></select>
         </div>
         <div>
+          <label data-i18n="cat.compare.dept1">一级部门（不选=对比各一级部门）</label>
+          <select id="catCompareDept"><option value="" data-i18n="common.all">全部</option></select>
+        </div>
+        <div>
           <label data-i18n="trend.entity">实体（不选=全部）</label>
           <select id="catCompareEntity"><option value="" data-i18n="common.all">全部</option></select>
         </div>
@@ -259,6 +271,7 @@
           <button id="catCompareQueryBtn" data-i18n="common.query">查询</button>
         </div>
       </div>
+      <div class="muted" style="margin-top:6px;" data-i18n="cat.compare.drilldown_hint">选定一级部门后，下方表格会从"对比各一级部门"切换成"对比该一级部门下的各二级部门"。</div>
       <table id="catCompareTable" style="margin-top:16px;">
         <thead><tr><th data-i18n="cat.compare.table.department">部门</th><th data-i18n="cat.compare.table.headcount">人数</th><th data-i18n="cat.compare.table.category_total">类目总额 (₦)</th><th data-i18n="cat.compare.table.per_capita">人均 (₦)</th><th data-i18n="cat.compare.table.pct_of_hr_cost">占该部门HR Cost比例</th></tr></thead>
         <tbody></tbody>
@@ -275,6 +288,10 @@
         <div>
           <label data-i18n="trend.dept">部门（不选=全公司）</label>
           <select id="compDept"><option value="" data-i18n="common.all">全部</option></select>
+        </div>
+        <div>
+          <label data-i18n="trend.dept2">二级部门（需先选一级部门）</label>
+          <select id="compDept2" disabled><option value="" data-i18n="common.all">全部</option></select>
         </div>
         <div>
           <label data-i18n="trend.entity">实体（不选=全部）</label>
