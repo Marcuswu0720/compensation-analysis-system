@@ -1001,7 +1001,10 @@ function renderComposition(r) {
 const pctStr = (p) => (p === null || p === undefined ? '' : ` (${p.toFixed(1)}%)`);
 
 function flatItemLabel(item) {
-  if (item.key !== 'headcount') return item.label;
+  if (item.key !== 'headcount') {
+    if (currentLang() === 'en') return CATEGORY_LABEL_EN[item.key] || ATTR_ITEM_LABEL_EN[item.key] || item.label;
+    return item.label;
+  }
   const net = (item.joiners_count || 0) - (item.leavers_count || 0);
   const direction = net > 0 ? t('attr.net_increase', { n: net }) : net < 0 ? t('attr.net_decrease', { n: Math.abs(net) }) : t('attr.net_unchanged');
   return t('attr.headcount_change_prefix') + direction + t('attr.joiners_leavers', {
@@ -1052,12 +1055,29 @@ function renderAttributionInto(el, r) {
     .join('');
   const itemsSum = items.reduce((s, item) => s + item.amount, 0);
 
+  const behaviorLabelText = (l) => (currentLang() === 'en' ? BEHAVIOR_LABEL_EN[l.key] || l.label : l.label);
   const labelRows = (r.behavior_labels || [])
     .map(
       (l) =>
-        `<tr><td>${l.label}</td><td>${t('attr.formal_contract_split', { formal: l.count_formal, contract: l.count_contract })}</td><td>${l.amount >= 0 ? '+' : ''}${fmtMoney(l.amount)}${pctStr(l.pct_of_net_change)}</td></tr>`
+        `<tr><td>${behaviorLabelText(l)}</td><td>${t('attr.formal_contract_split', { formal: l.count_formal, contract: l.count_contract })}</td><td>${l.amount >= 0 ? '+' : ''}${fmtMoney(l.amount)}${pctStr(l.pct_of_net_change)}</td></tr>`
     )
     .join('');
+
+  // anomaly_details (stable type + raw numbers) is what's rendered here so
+  // an English UI gets a translated sentence via t('attr.anomaly.<type>')
+  // instead of the hardcoded Chinese prose in r.anomalies - see
+  // compute/attribution.py's _anomalies() docstring for why both exist
+  // (r.anomalies is what qa/rule_engine.py's Chinese-only chat answers
+  // still consume directly). Falls back to the raw Chinese sentence for any
+  // anomaly type this frontend doesn't have a template for yet, rather than
+  // silently dropping it.
+  const anomalyText = (detail, index) => {
+    const key = `attr.anomaly.${detail.type}`;
+    const translated = t(key, { month: detail.month, count: detail.count });
+    if (translated !== key) return translated;
+    return (r.anomalies && r.anomalies[index]) || detail.type;
+  };
+  const anomalies = r.anomaly_details && r.anomaly_details.length ? r.anomaly_details.map(anomalyText) : r.anomalies || [];
 
   el.innerHTML = `
     <div class="summary-grid">
@@ -1074,7 +1094,7 @@ function renderAttributionInto(el, r) {
     </table>
     <div class="muted" style="margin-top:6px;">${t('attr.reconcile_note_prefix')}${items.length}${t('attr.reconcile_note_sum')}${fmtMoney(itemsSum)}${r.reconciled ? t('attr.reconcile_note_ok') : t('attr.reconcile_note_fail')}</div>
 
-    ${r.anomalies && r.anomalies.length ? `<ul class="issue-list severe" style="margin-top:12px;">${r.anomalies.map((a) => `<li>⚠️ ${a}</li>`).join('')}</ul>` : ''}
+    ${anomalies.length ? `<ul class="issue-list severe" style="margin-top:12px;">${anomalies.map((a) => `<li>⚠️ ${a}</li>`).join('')}</ul>` : ''}
 
     <h4 style="margin-top:20px;">${t('attr.behavior_title')}</h4>
     <table>

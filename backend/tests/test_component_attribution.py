@@ -85,6 +85,24 @@ def test_behavior_labels_and_formal_contract_split_and_anomaly(db_session):
     assert "2026-03" in r.anomalies[0]
     assert "1" in r.anomalies[0]
 
+    # anomaly_details is the structured counterpart the frontend renders
+    # (translated to English there instead of hardcoding r.anomalies'
+    # Chinese sentence) - both are built from the same underlying event, so
+    # they must always come out in lockstep.
+    assert len(r.anomaly_details) == 1
+    assert r.anomaly_details[0].type == "formal_raise_outside_window"
+    assert r.anomaly_details[0].month == "2026-03"
+    assert r.anomaly_details[0].count == 1
+
+    # BehaviorLabel.key is the stable identifier the frontend translates by
+    # (BEHAVIOR_LABEL_EN) instead of string-matching l.label - verify every
+    # label carries the right key alongside its Chinese label.
+    keys = {b.label: b.key for b in r.behavior_labels}
+    assert keys["底薪调整"] == "basic_salary_adjustment"
+    assert keys["绩效薪资波动"] == "performance_bonus_fluctuation"
+    assert keys["奖金/提成变化"] == "commission_bonus_change"
+    assert keys["加班费变化"] == "overtime_change"
+
 
 def test_no_anomaly_when_formal_raise_happens_in_official_window(db_session):
     _confirm(db_session, "2026-01", MONTH1_EMPLOYEES)
@@ -92,6 +110,7 @@ def test_no_anomaly_when_formal_raise_happens_in_official_window(db_session):
 
     r = compute_attribution(db_session, "2026-01", "2026-04")
     assert r.anomalies == []
+    assert r.anomaly_details == []
 
 
 def test_category_trend_and_composition_use_real_column_names(db_session):
