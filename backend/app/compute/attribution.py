@@ -63,11 +63,25 @@ class EmployeeCost:
 
 @dataclass
 class BehaviorLabel:
+    key: str  # stable snake_case identifier - see frontend/static/js/i18n.js's BEHAVIOR_LABEL_EN
     label: str
     count_formal: int
     count_contract: int
     amount: float
     pct_of_net_change: float | None
+
+
+@dataclass
+class AnomalyDetail:
+    """Structured counterpart to AttributionResult.anomalies' Chinese prose
+    strings - see _anomalies()'s docstring for why both shapes exist.
+    `type` is the stable identifier the frontend's i18n template keys off
+    of (frontend/static/js/i18n.js's 'attr.anomaly.<type>'); the rest are
+    the raw values that sentence needs to interpolate."""
+
+    type: str
+    month: str
+    count: int
 
 
 @dataclass
@@ -113,6 +127,7 @@ class AttributionResult:
     component_deltas: dict[str, float] = field(default_factory=dict)
     behavior_labels: list[BehaviorLabel] = field(default_factory=list)
     anomalies: list[str] = field(default_factory=list)
+    anomaly_details: list[AnomalyDetail] = field(default_factory=list)
     top_increases: list[EmployeeCost] = field(default_factory=list)
     top_decreases: list[EmployeeCost] = field(default_factory=list)
     leaver_reasons: dict[str, int] = field(default_factory=dict)
@@ -225,20 +240,21 @@ def _behavior_labels(prev_emps: dict, cur_emps: dict, stayers: set[str], net_cha
         return abs(getattr(cur_emps[sid], field) - getattr(prev_emps[sid], field)) > CHANGE_TOLERANCE
 
     predicates = {
-        "底薪调整": lambda sid: changed(sid, "basic_salary_actual"),
-        "绩效薪资波动": lambda sid: not changed(sid, "basic_salary_actual") and changed(sid, "performance_bonus"),
-        "奖金/提成变化": lambda sid: changed(sid, "commission_bonus"),
-        "加班费变化": lambda sid: changed(sid, "overtime_amount"),
+        "basic_salary_adjustment": ("底薪调整", lambda sid: changed(sid, "basic_salary_actual")),
+        "performance_bonus_fluctuation": ("绩效薪资波动", lambda sid: not changed(sid, "basic_salary_actual") and changed(sid, "performance_bonus")),
+        "commission_bonus_change": ("奖金/提成变化", lambda sid: changed(sid, "commission_bonus")),
+        "overtime_change": ("加班费变化", lambda sid: changed(sid, "overtime_amount")),
     }
 
     labels = []
-    for name, predicate in predicates.items():
+    for key, (name, predicate) in predicates.items():
         matching = [sid for sid in stayers if predicate(sid)]
         count_formal = sum(1 for sid in matching if cur_emps[sid].employment_type == "Formal")
         count_contract = len(matching) - count_formal
         amount = sum(cur_emps[sid].hr_cost - prev_emps[sid].hr_cost for sid in matching)
         labels.append(
             BehaviorLabel(
+                key=key,
                 label=name,
                 count_formal=count_formal,
                 count_contract=count_contract,
@@ -311,15 +327,28 @@ def flatten_attribution(r: AttributionResult) -> list[AttributionLineItem]:
     return items
 
 
-def _anomalies(behavior_labels: list[BehaviorLabel], cur_month: str) -> list[str]:
-    anomalies = []
-    raise_label = next((b for b in behavior_labels if b.label == "底薪调整"), None)
+def _anomalies(behavior_labels: list[BehaviorLabel], cur_month: str) -> tuple[list[str], list[AnomalyDetail]]:
+    """Returns the same anomaly twice, in two shapes:
+    - `anomalies` (list[str]): a ready-to-print Chinese sentence - this is
+      what qa/rule_engine.py's chat answers consume directly (chat stays
+      Chinese-only by design, see i18n.js's module docstring), unchanged
+      from before this function grew a second return value.
+    - `AnomalyDetail` (stable `type` + the raw numbers): what the web
+      dashboard now renders instead, via an i18n template
+      (frontend/static/js/i18n.js's 'attr.anomaly.<type>') so an English UI
+      doesn't end up with a hardcoded Chinese sentence stuck in the middle
+      of it - see BehaviorLabel.key for the same reasoning applied to the
+      behavior-label rows."""
+    anomalies: list[str] = []
+    details: list[AnomalyDetail] = []
+    raise_label = next((b for b in behavior_labels if b.key == "basic_salary_adjustment"), None)
     cur_month_num = int(cur_month.split("-")[1])
     if raise_label and raise_label.count_formal > 0 and cur_month_num not in FORMAL_RAISE_MONTHS:
         anomalies.append(
             f"正式工调薪窗口通常固定在4月/10月，但 {cur_month} 检测到 {raise_label.count_formal} 名正式工发生了底薪调整，建议核实原因"
         )
-    return anomalies
+        details.append(AnomalyDetail(type="formal_raise_outside_window", month=cur_month, count=raise_label.count_formal))
+    return anomalies, details
 
 
 def compute_attribution(
@@ -359,7 +388,7 @@ def compute_attribution(
 
     component_deltas = _component_deltas(prev_emps, cur_emps, stayers, stayers_delta)
     behavior_labels = _behavior_labels(prev_emps, cur_emps, stayers, net_change)
-    anomalies = _anomalies(behavior_labels, cur_month)
+    anomalies, anomaly_details = _anomalies(behavior_labels, cur_month)
 
     stayer_deltas = sorted(
         (
@@ -405,6 +434,7 @@ def compute_attribution(
         component_deltas=component_deltas,
         behavior_labels=behavior_labels,
         anomalies=anomalies,
+        anomaly_details=anomaly_details,
         top_increases=top_increases,
         top_decreases=top_decreases,
         leaver_reasons=leaver_reasons,

@@ -261,6 +261,7 @@ const TRANSLATIONS = {
     'attr.table.headcount': '人数',
     'attr.table.cost': '涉及成本',
     'attr.formal_contract_split': '正式工 {formal} / 合同工 {contract}',
+    'attr.anomaly.formal_raise_outside_window': '正式工调薪窗口通常固定在4月/10月，但 {month} 检测到 {count} 名正式工发生了底薪调整，建议核实原因',
     'attr.top_increases': '成本涨幅最大：',
     'attr.top_decreases': '成本降幅最大：',
     'attr.leaver_reasons': '离职原因分布：',
@@ -515,6 +516,7 @@ const TRANSLATIONS = {
     'attr.table.headcount': 'Headcount',
     'attr.table.cost': 'Cost involved',
     'attr.formal_contract_split': 'Formal {formal} / Contract {contract}',
+    'attr.anomaly.formal_raise_outside_window': 'Formal salary adjustments are normally only expected in April/October, but {count} Formal employee(s) had a basic salary change in {month} - worth confirming why.',
     'attr.top_increases': 'Largest cost increases:',
     'attr.top_decreases': 'Largest cost decreases:',
     'attr.leaver_reasons': 'Resignation reasons:',
@@ -543,6 +545,24 @@ const CATEGORY_LABEL_EN = {
   net_pay: 'Net Pay',
   deduction_total: 'Employee Deductions',
   hr_cost: 'Total HR Cost',
+};
+
+// 归因拆解 flat item labels not covered by CATEGORY_LABEL_EN above - these
+// two keys (compute/attribution.py's flatten_attribution()) are concepts
+// specific to the attribution breakdown, not real salary categories, so
+// they don't belong in CATEGORY_FIELDS/CATEGORY_LABEL_EN itself.
+const ATTR_ITEM_LABEL_EN = {
+  other_residual: 'Other / Unclassified Difference (incl. bonus/backpay adjustments)',
+  unattributed: 'Bonus/Backpay Adjustment Not Attributable to a Specific Active Employee',
+};
+
+// 归因拆解"按变动性质分类的补充说明" row labels, keyed by
+// compute/attribution.py's BehaviorLabel.key.
+const BEHAVIOR_LABEL_EN = {
+  basic_salary_adjustment: 'Basic Salary Adjustment',
+  performance_bonus_fluctuation: 'Performance Bonus Fluctuation',
+  commission_bonus_change: 'Commission/Bonus Change',
+  overtime_change: 'Overtime Change',
 };
 
 function currentLang() {
