@@ -27,7 +27,10 @@
       <div class="row">
         <div>
           <label data-i18n="upload.month">数据月份</label>
-          <input type="month" id="uploadMonth">
+          <div style="display:flex;gap:4px;">
+            <select id="uploadYear"></select>
+            <select id="uploadMonthNum"></select>
+          </div>
         </div>
         <div>
           <label data-i18n="upload.salary_type">薪酬类型</label>
