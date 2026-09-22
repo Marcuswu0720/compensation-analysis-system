@@ -52,6 +52,32 @@ async function initShell() {
 }
 
 // ---------- upload tab ----------
+
+// PRD note: `<input type="month">` looked like the obvious choice, but
+// desktop Safari (macOS) has never implemented it - it silently falls back
+// to a plain text field with no picker, no format enforcement, and no
+// visible way to type a valid value, so `.value` stays empty and the
+// upload/month-selection flow is unusable for any Mac user on Safari
+// (confirmed by a real user report). Two plain `<select>` dropdowns (year +
+// month) work identically across every browser, so that's what this uses
+// instead - same approach as the "reset" empty-option pattern the trend/
+// export tabs already use for their month pickers.
+function populateUploadMonthSelectors() {
+  const yearSel = document.getElementById('uploadYear');
+  const monthSel = document.getElementById('uploadMonthNum');
+  if (!yearSel || !monthSel || yearSel.options.length) return; // already populated
+
+  const thisYear = new Date().getFullYear();
+  const years = [];
+  for (let y = thisYear - 3; y <= thisYear + 1; y++) years.push(y);
+  yearSel.innerHTML = `<option value="">${t('common.please_select')}</option>` + years.map((y) => `<option value="${y}">${y}</option>`).join('');
+
+  const months = [];
+  for (let m = 1; m <= 12; m++) months.push(String(m).padStart(2, '0'));
+  monthSel.innerHTML =
+    `<option value="">${t('common.please_select')}</option>` + months.map((m) => `<option value="${m}">${m}</option>`).join('');
+}
+
 function issueSeverity(issue) {
   // field_mapping_check (PRD V1.8 §4) fires on every upload, success or not
   // - only the "some target field didn't match" case should read as a
@@ -177,8 +203,12 @@ async function deleteBatch(batchId, month) {
 function initUploadTab() {
   if (currentUserRole !== 'admin') return; // viewers never touch the upload router - see routers/upload.py's require_admin
 
+  populateUploadMonthSelectors();
+
   document.getElementById('uploadBtn').addEventListener('click', async () => {
-    const month = document.getElementById('uploadMonth').value;
+    const year = document.getElementById('uploadYear').value;
+    const monthNum = document.getElementById('uploadMonthNum').value;
+    const month = year && monthNum ? `${year}-${monthNum}` : '';
     const salaryType = document.getElementById('uploadSalaryType').value;
     const fileInput = document.getElementById('uploadFile');
     const errEl = document.getElementById('uploadError');
