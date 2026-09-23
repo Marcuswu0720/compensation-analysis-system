@@ -52,6 +52,40 @@ def _is_active_employee(role: str, row: dict, hmap: dict) -> tuple[bool, str | N
     return False, format_date_value(exit_val)
 
 
+def _to_float(value, bad_cells: list[dict], sheet: str | None, staff_id, column: str) -> float:
+    """Tolerant numeric read for amount columns: a stray text cell (e.g. a
+    payment-method note like "Bank" typed into the HR Cost column) used to
+    raise straight out of float() and fail the whole upload with an
+    unhelpful "could not convert string to float" - now it counts as 0 and
+    is recorded so the review step can point at the exact cell."""
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", "")
+    if text in ("", "-"):
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        bad_cells.append({"sheet": sheet, "staff_id": staff_id, "column": column, "value": str(value)})
+        return 0.0
+
+
+def _non_numeric_issue(bad_cells: list[dict]) -> dict:
+    shown = "；".join(
+        f"sheet「{c['sheet']}」Staff ID {c['staff_id']} 的「{c['column']}」= {c['value']!r}" for c in bad_cells[:10]
+    )
+    more = f" 等共 {len(bad_cells)} 处" if len(bad_cells) > 10 else ""
+    return {
+        "issue_type": "non_numeric_amount",
+        "issue_detail": f"以下金额单元格不是数字，已按 0 处理，请核对原表后决定是否确认: {shown}{more}",
+        "row_count_affected": len(bad_cells),
+    }
+
+
 def _field_mapping_issue(scope_label: str, total: int, matched: int, missing: list[dict]) -> dict:
     """PRD V1.8 §4: the upload-time field-mapping diagnostic - one issue per
     sheet, always present (not just when something's wrong), so the admin
@@ -137,6 +171,7 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
     resolver.prepare("entity", raw_entities)
 
     employees: dict[str, dict] = {}
+    non_numeric_cells: list[dict] = []
     gross_mismatch_count = 0
     field_mapping_issues: list[dict] = []
     for role in EMPLOYEE_SHEET_KEYS:
@@ -188,7 +223,13 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
                     "department1": resolver.resolve("department", dept_raw),
                     "department1_raw": dept_raw,
                     "job_grade": get(row, sheet_result.header_map, "job_grade"),
-                    "hr_cost": float(get(row, sheet_result.header_map, "hr_cost") or 0),
+                    "hr_cost": _to_float(
+                        get(row, sheet_result.header_map, "hr_cost"),
+                        non_numeric_cells,
+                        sheet_result.sheet_name,
+                        sid,
+                        sheet_result.header_map.get("hr_cost", "hr_cost"),
+                    ),
                     "is_active": is_active,
                     "resign_or_exit_date": status_date,
                     "source_sheet": sheet_result.sheet_name,
@@ -207,19 +248,24 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
             sid = get(row, sheet_result.header_map, "staff_id")
             if not sid:
                 continue
+            bonus_sid = str(sid).strip()
+
+            def bonus_num(key: str, row=row, sheet_result=sheet_result, bonus_sid=bonus_sid) -> float:
+                return _to_float(get(row, sheet_result.header_map, key), non_numeric_cells, sheet_result.sheet_name, bonus_sid, sheet_result.header_map.get(key, key))
+
             dept_raw = get(row, sheet_result.header_map, "department1")
             bonuses.append(
                 {
                     "performance_month": performance_month,
                     "payment_month": month,
-                    "staff_id": str(sid).strip(),
+                    "staff_id": bonus_sid,
                     "entity": resolver.resolve("entity", get(row, sheet_result.header_map, "entity") or entity_hint),
                     "department1": resolver.resolve("department", dept_raw),
-                    "performance_bonus": float(get(row, sheet_result.header_map, "performance_bonus") or 0),
-                    "commission": float(get(row, sheet_result.header_map, "commission") or 0),
-                    "other_income": float(get(row, sheet_result.header_map, "other_income") or 0),
-                    "deduction": float(get(row, sheet_result.header_map, "deduction") or 0),
-                    "bonus_total": float(get(row, sheet_result.header_map, "bonus_total") or 0),
+                    "performance_bonus": bonus_num("performance_bonus"),
+                    "commission": bonus_num("commission"),
+                    "other_income": bonus_num("other_income"),
+                    "deduction": bonus_num("deduction"),
+                    "bonus_total": bonus_num("bonus_total"),
                 }
             )
 
@@ -264,6 +310,8 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
             }
         )
     issues.extend(field_mapping_issues)
+    if non_numeric_cells:
+        issues.append(_non_numeric_issue(non_numeric_cells))
     if gross_mismatch_count:
         issues.append(
             {

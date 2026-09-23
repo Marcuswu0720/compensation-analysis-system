@@ -196,3 +196,32 @@ def test_stage_base_recognizes_new_entity_sheets_without_hardcoding(db_session):
 
     confirm_upload(db_session, batch, operator="tester")
     assert set(list_entities(db_session)) == {"PalmPay", "Blooms"}
+
+
+def test_non_numeric_hr_cost_cell_is_reported_not_fatal(db_session):
+    """A stray text cell in the HR Cost column (e.g. "Bank" typed where an
+    amount belongs) used to abort the whole upload with "could not convert
+    string to float: 'Bank'" - it must now stage as 0 and be surfaced as a
+    review issue naming the sheet, staff and value. Comma-formatted numeric
+    text must still parse normally."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _sheet(
+        wb,
+        "Formal",
+        ["Staff ID", "Staff Name", "Entity", "Department 1", "HR Cost"],
+        [["E001", "Alice", "PalmPay", "Sales", 1000], ["E002", "Bob", "PalmPay", "Sales", "Bank"], ["E003", "Carol", "PalmPay", "Ops", "1,250.50"]],
+    )
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    batch = stage_upload(db_session, month="2025-12", file_bytes=buf.getvalue(), filename="x.xlsx", uploaded_by="t")
+    payload = json.loads(batch.staged_data)
+
+    by_id = {e["staff_id"]: e for e in payload["employees"]}
+    assert by_id["E001"]["hr_cost"] == 1000
+    assert by_id["E002"]["hr_cost"] == 0
+    assert by_id["E003"]["hr_cost"] == 1250.5
+    bad = [i for i in payload["issues"] if i["issue_type"] == "non_numeric_amount"]
+    assert len(bad) == 1 and bad[0]["row_count_affected"] == 1
+    assert "Formal" in bad[0]["issue_detail"] and "E002" in bad[0]["issue_detail"] and "'Bank'" in bad[0]["issue_detail"]
