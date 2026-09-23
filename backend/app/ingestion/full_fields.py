@@ -315,13 +315,29 @@ def extract_full_detail(
     return top_level, detail_json, missing
 
 
-def check_field_mapping(header_index: dict[str, str], specs: list[FieldSpec]) -> tuple[int, int, list[dict]]:
+def check_field_mapping(
+    header_index: dict[str, str], specs: list[FieldSpec], satisfied_elsewhere: frozenset[str] = frozenset()
+) -> tuple[int, int, list[dict]]:
     """PRD V1.8 §4: the upload-time field-mapping diagnostic. Independent of
     exclude_keys/top_level_keys routing (unlike extract_full_detail) - this
     checks EVERY target field in `specs`, including the ones handled by a
     separate mechanism (staff_id, entity, the analysis-layer fields, etc.),
     because the point is "does a matching raw column exist in this sheet at
     all", not "does this function need to do anything about it".
+
+    `satisfied_elsewhere`: field keys that should count as matched even
+    without a header - for a field the sheet is never expected to carry a
+    column for in the first place, not one that's just missing. The
+    motivating case: a Formal/Contract-<Entity> or standalone bonus batch
+    sheet named after its entity (e.g. "Formal-Blooms", or a bonus sheet
+    literally named "Blooms") is allowed to skip an Entity column entirely -
+    the sheet name itself supplies the default (see ingestion/parser.py's
+    default_entity_for_suffix()/entity_hint_from_sheet_name()). Reporting
+    "Entity 未能匹配" on every single such upload forever would be the exact
+    same false-alarm class as the basic_salary_actual diagnostic bug fixed
+    earlier this session - this makes it impossible to reintroduce for any
+    future field with the same "value comes from somewhere other than a
+    column in this sheet" shape.
 
     Returns (total_field_count, matched_count, missing_details) where each
     missing_details entry is {"key", "target_label", "tried_aliases"} - the
@@ -331,7 +347,7 @@ def check_field_mapping(header_index: dict[str, str], specs: list[FieldSpec]) ->
     missing: list[dict] = []
     matched = 0
     for spec in specs:
-        if find_alias(header_index, spec.source_aliases) is not None:
+        if spec.key in satisfied_elsewhere or find_alias(header_index, spec.source_aliases) is not None:
             matched += 1
         else:
             missing.append({"key": spec.key, "target_label": spec.target_label, "tried_aliases": list(spec.source_aliases)})

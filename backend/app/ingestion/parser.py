@@ -20,6 +20,13 @@ class SheetParseResult:
     rows: list[dict]
     header_map: dict[str, str]
     sheet_name: str | None
+    # Set when this sheet's rows have no Entity column of their own and a
+    # default was derived instead (from an entity suffix in the sheet name,
+    # or a fixed SHEET_DEFAULT_ENTITY) - lets a caller's field-mapping
+    # diagnostic know "entity" isn't actually missing, just supplied a
+    # different way (see full_fields.py's check_field_mapping()'s
+    # satisfied_elsewhere param).
+    entity_hint: str | None = None
 
 
 @dataclass
@@ -86,6 +93,39 @@ def default_entity_for_suffix(suffix: str) -> str:
     if canonical:
         return canonical
     return suffix if any(c.isupper() for c in suffix) else suffix.title()
+
+
+# A standalone 奖金批次 sheet can be named after its entity alone (PP, Blooms,
+# Flexi, Jupiter, ...) instead of a Formal/Contract-style role+suffix name -
+# there's no "role" word for bonus sheets to anchor on, so this only accepts
+# a BARE single alphanumeric token as the whole sheet name, not a substring
+# match against an arbitrary sheet name. That's deliberately narrower than
+# match_base_sheet_role(): a real bonus file's sheet is sometimes named
+# something descriptive like "Feb Bonus-PP" (entity embedded with other
+# words, not the entity alone) - those must keep resolving entity purely
+# from the row's own Entity column / the matched base employee, exactly as
+# before, not from a guess extracted out of an unrelated-looking sheet name.
+_BARE_ENTITY_SHEET_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+
+
+def entity_hint_from_sheet_name(sheet_name: str, known_entities: frozenset[str] = frozenset()) -> str | None:
+    """`known_entities` should be every entity name already on record in the
+    system (case doesn't matter - matched case-insensitively), typically
+    from the Formal/Contract base batch already uploaded for the same
+    company - see loader.py's _stage_bonus_batch(). Required (beyond
+    ENTITY_ALIASES) because a bare single-word sheet name is ambiguous on
+    its own: "Blooms" is obviously meant as an entity, but so, structurally,
+    is "Bonus" or "Summary" - without checking against entities the system
+    already actually knows about, this would misfire on any plain English
+    word that happens to be the whole sheet name."""
+    name = sheet_name.strip()
+    if not _BARE_ENTITY_SHEET_RE.match(name):
+        return None
+    if name.lower() in ENTITY_ALIASES:
+        return ENTITY_ALIASES[name.lower()]
+    if name.lower() in {e.lower() for e in known_entities}:
+        return default_entity_for_suffix(name)
+    return None
 
 
 def is_summary_row(sid) -> bool:
@@ -162,7 +202,7 @@ def parse_workbook(file_obj_or_path) -> WorkbookParseResult:
         if "entity" not in hmap and entity_hint:
             for row in rows:
                 row["__default_entity__"] = entity_hint
-        base_sheets[role].append(SheetParseResult(rows=rows, header_map=hmap, sheet_name=sheet_name))
+        base_sheets[role].append(SheetParseResult(rows=rows, header_map=hmap, sheet_name=sheet_name, entity_hint=entity_hint if "entity" not in hmap else None))
 
         for must_have in ["staff_id", "department1", "hr_cost"]:
             if must_have not in hmap:
@@ -179,10 +219,11 @@ def parse_workbook(file_obj_or_path) -> WorkbookParseResult:
         matched_names.add(sheet_name)
         ws = wb[sheet_name]
         rows, hmap = parse_sheet(ws)
-        if "entity" not in hmap and role in SHEET_DEFAULT_ENTITY:
+        role_entity_hint = SHEET_DEFAULT_ENTITY.get(role) if "entity" not in hmap else None
+        if role_entity_hint:
             for row in rows:
-                row["__default_entity__"] = SHEET_DEFAULT_ENTITY[role]
-        by_role[role] = SheetParseResult(rows=rows, header_map=hmap, sheet_name=sheet_name)
+                row["__default_entity__"] = role_entity_hint
+        by_role[role] = SheetParseResult(rows=rows, header_map=hmap, sheet_name=sheet_name, entity_hint=role_entity_hint)
 
     unmatched_sheets = [s for s in sheetnames if s not in matched_names]
     wb.close()

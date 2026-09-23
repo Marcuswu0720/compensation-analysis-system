@@ -7,7 +7,7 @@ from app.compute.attribution import compute_attribution
 from app.compute.trends import get_trend, list_departments, list_entities
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
-from app.ingestion.parser import default_entity_for_suffix, match_base_sheet_role
+from app.ingestion.parser import default_entity_for_suffix, entity_hint_from_sheet_name, match_base_sheet_role
 
 from .xlsx_fixtures import _sheet, build_month1_workbook, build_month2_workbook
 
@@ -139,6 +139,29 @@ def test_default_entity_for_suffix_uses_alias_map_and_capitalizes():
     assert default_entity_for_suffix("PP") == "PalmPay"  # ENTITY_ALIASES
     assert default_entity_for_suffix("Blooms") == "Blooms"  # already capitalized, left alone
     assert default_entity_for_suffix("blooms") == "Blooms"  # all-lowercase sheet name -> title-cased
+
+
+def test_entity_hint_from_sheet_name_only_matches_bare_known_entity_names():
+    """Standalone 奖金批次 sheets can be named after their entity alone (no
+    Formal/Contract role word to anchor a suffix on, unlike the base batch).
+    "PP" resolves via ENTITY_ALIASES regardless of what's already known (it's
+    a small, deliberately curated, stable list) - anything else needs to
+    already be a known entity in the system (typically established by that
+    entity's own Formal/Contract base-batch sheets already having been
+    uploaded), otherwise ANY plain single-word sheet name ("Bonus",
+    "Summary") would misfire as a made-up "entity". A descriptive real sheet
+    name like "Feb Bonus-PP" (entity embedded with other words, not a bare
+    token) is rejected outright regardless of known_entities - it still
+    resolves entity purely from its own Entity column / the matched base
+    employee, same as before this feature existed."""
+    assert entity_hint_from_sheet_name("PP") == "PalmPay"
+    assert entity_hint_from_sheet_name("Blooms") is None  # not a known entity yet
+    assert entity_hint_from_sheet_name("Blooms", frozenset({"Blooms"})) == "Blooms"
+    assert entity_hint_from_sheet_name("blooms", frozenset({"Blooms"})) == "Blooms"  # case-insensitive match
+    assert entity_hint_from_sheet_name("Jupiter", frozenset({"Blooms"})) is None  # known set doesn't include it
+    assert entity_hint_from_sheet_name("Bonus", frozenset({"Bonus"})) == "Bonus"  # deliberately still matches if it's genuinely a known entity name
+    assert entity_hint_from_sheet_name("Feb Bonus-PP", frozenset({"PP"})) is None  # not a bare token, rejected regardless
+    assert entity_hint_from_sheet_name("1月离职") is None
 
 
 def test_stage_base_recognizes_new_entity_sheets_without_hardcoding(db_session):

@@ -11,6 +11,16 @@ existed).
 补发批次 (backpay) is unaffected - it keeps using the older, deliberately
 loose ingestion/supplemental.py parser, per the user's explicit confirmation
 that backpay files really are a simple list, not a full payroll template.
+
+Every sheet in the workbook is tried (no sheet-name pattern gates which ones
+count, unlike parser.py's base-batch role matching) - a sheet is only
+skipped for lacking a recognizable staff_id column. A sheet named after a
+bare entity (e.g. "PP", "Blooms", "Flexi", "Jupiter") gets that entity as
+the default for any row with no Entity value of its own, via
+ingestion/parser.py's entity_hint_from_sheet_name() (same idea as
+match_base_sheet_role()/default_entity_for_suffix() for Formal/Contract
+sheets, but bare-name-only since there's no role word for a bonus sheet to
+anchor a suffix on).
 """
 
 from dataclasses import dataclass, field
@@ -19,7 +29,7 @@ import openpyxl
 
 from .full_fields import BONUS_EXCLUDE_KEYS, BONUS_FIELDS, BONUS_TOP_LEVEL_KEYS, check_field_mapping, extract_full_detail
 from .header_match import build_header_index, find_alias
-from .parser import is_summary_row
+from .parser import entity_hint_from_sheet_name, is_summary_row
 
 _SPEC_BY_KEY = {s.key: s for s in BONUS_FIELDS}
 
@@ -40,7 +50,12 @@ class BonusBatchParseResult:
     field_mapping_reports: list[FieldMappingReport] = field(default_factory=list)
 
 
-def parse_bonus_batch_workbook(file_obj) -> BonusBatchParseResult:
+def parse_bonus_batch_workbook(file_obj, known_entities: frozenset[str] = frozenset()) -> BonusBatchParseResult:
+    """`known_entities`: every entity name already on record in the system
+    (see ingestion/parser.py's entity_hint_from_sheet_name()) - the caller
+    (loader.py) supplies this from the DB, keeping this function itself
+    free of any DB dependency, same as every other pure workbook parser in
+    this package."""
     wb = openpyxl.load_workbook(file_obj, data_only=True)
     result = BonusBatchParseResult(sheet_names=list(wb.sheetnames))
 
@@ -56,14 +71,23 @@ def parse_bonus_batch_workbook(file_obj) -> BonusBatchParseResult:
             continue
         sid_col_idx = clean_headers.index(staff_id_col)
 
-        total, matched, missing = check_field_mapping(header_index, BONUS_FIELDS)
-        result.field_mapping_reports.append(FieldMappingReport(sheet_name=sheet_name, total=total, matched=matched, missing=missing))
-
         staff_name_col = find_alias(header_index, _SPEC_BY_KEY["staff_name"].source_aliases)
         department1_col = find_alias(header_index, _SPEC_BY_KEY["department1"].source_aliases)
         entity_col = find_alias(header_index, _SPEC_BY_KEY["entity"].source_aliases)
         employment_type_col = find_alias(header_index, _SPEC_BY_KEY["employment_type"].source_aliases)
         hr_cost_col = find_alias(header_index, _SPEC_BY_KEY["hr_cost"].source_aliases)
+
+        # A sheet named after a bare entity (e.g. "Blooms", "PP") doesn't need
+        # its own Entity column - the sheet name supplies the default for any
+        # row whose own Entity cell is blank (see loader.py's
+        # _stage_bonus_batch()). Only kicks in when there's genuinely no
+        # Entity column at all; a descriptively-named sheet like "Feb
+        # Bonus-PP" still relies purely on its own Entity column / the
+        # matched base employee, same as before.
+        sheet_entity_hint = entity_hint_from_sheet_name(sheet_name, known_entities) if entity_col is None else None
+        satisfied_elsewhere = frozenset({"entity"}) if sheet_entity_hint else frozenset()
+        total, matched, missing = check_field_mapping(header_index, BONUS_FIELDS, satisfied_elsewhere)
+        result.field_mapping_reports.append(FieldMappingReport(sheet_name=sheet_name, total=total, matched=matched, missing=missing))
 
         for r in range(2, ws.max_row + 1):
             sid = ws.cell(row=r, column=sid_col_idx + 1).value
@@ -86,7 +110,7 @@ def parse_bonus_batch_workbook(file_obj) -> BonusBatchParseResult:
                     "staff_id": str(sid).strip(),
                     "staff_name": row.get(staff_name_col) if staff_name_col else None,
                     "department1_raw": row.get(department1_col) if department1_col else None,
-                    "entity_raw": row.get(entity_col) if entity_col else None,
+                    "entity_raw": (row.get(entity_col) if entity_col else None) or sheet_entity_hint,
                     "employment_type": row.get(employment_type_col) if employment_type_col else None,
                     "amount": amount,
                     "source_sheet": sheet_name,

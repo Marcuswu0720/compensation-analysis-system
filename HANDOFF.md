@@ -121,13 +121,14 @@
      上传"）以后遇到类似"老数据显示不对"的反馈时要先分清楚是哪一种。
 - **V1.9 热修复之后的第二轮**（本次会话，起点是用户用真实一月导出文件复核后反馈"扣款金额依旧
   丢失"+"奖金基础信息依旧丢失"，过程中用户又陆续用真实文件/真实操作反馈了另外几个问题，全部在
-  同一轮会话里处理。八项：① 正式工/合同工扣款金额字段别名猜错 ② 奖金批次基础信息缺兜底
+  同一轮会话里处理。九项：① 正式工/合同工扣款金额字段别名猜错 ② 奖金批次基础信息缺兜底
   ③ Contract 的 basic_salary_actual 诊断误报 ④ 奖金上传遇到裸 `datetime.time` 单元格直接崩溃
   ⑤ "薪资类目"页面"人力成本合计"漏加奖金/补发批次 ⑥ 导出接口疑似内存问题导致整个服务崩溃重启
   （**只诊断、没有修复**，见"未完成事项"）⑦ Mac（桌面 Safari）上传数据页完全不可用（月份选不了
   /传不了数据，`<input type="month">` 在桌面 Safari 上从来没被实现过）⑧ 上传时新实体（Blooms/
   Jupiter 等）的 Formal/Contract sheet 完全不被识别（sheet 名字识别逻辑硬编码死了只认 PP/
-  Flexi 两个实体）。除了第⑥项，其余每项改完都单独 commit + push 到
+  Flexi 两个实体）⑨ 用户在第⑧项之后当场追加需求：单独传奖金批次时，新实体的 sheet 也要能按
+  纯实体名（`PP`/`Blooms`/`Flexi`/`Jupiter`）识别。除了第⑥项，其余每项改完都单独 commit + push 到
   `claude/data-export-field-loss-fix-bsy02i`，并在用户确认后合并进线上分支
   `claude/compensation-analysis-site-un8j4k`（大多是快进合并，无冲突；有一次因为线上分支同期
   被另一个会话加了双语 UI 功能，改成了普通合并，文件没有重叠，依旧无冲突）。以下是每一项的细节：
@@ -257,10 +258,41 @@
      `unrecognized_sheet`。新增回归测试 `test_match_base_sheet_role_recognizes_entity_
      suffix_in_either_order`、`test_default_entity_for_suffix_uses_alias_map_and_
      capitalizes`、`test_stage_base_recognizes_new_entity_sheets_without_hardcoding`
-     （`test_ingestion.py`）。**这次只改了 Formal/Contract（底薪批次）的 sheet 识别，奖金批次
-     的 `bonus_pp`/`bonus_flexi` 依旧是老的硬编码 PP/Flexi 两种，没有推广**——如果以后新实体
-     也要单独上传奖金批次、且命名规律类似（比如 `Bonus-Blooms`），需要照着同样的思路对
-     `bonus_pp`/`bonus_flexi` 做一次类似的泛化，而不是再加两个新的硬编码角色。
+     （`test_ingestion.py`）。~~这次只改了 Formal/Contract（底薪批次）的 sheet 识别，奖金批次
+     的 `bonus_pp`/`bonus_flexi` 没有推广~~——用户当场提出后续需求，已在第 9 条里一并处理了。
+  9. **单独传奖金批次时，新实体（Blooms/Jupiter）的 sheet 也要能按纯实体名识别**（第 8 项刚做完，
+     用户直接追加了后续需求：以后 Blooms/Jupiter 也要各自单独传奖金批次，sheet 名字就是纯实体名
+     `PP`/`Blooms`/`Flexi`/`Jupiter`，不像底薪批次那样有"Formal/Contract"这个角色词可以挂靠）。
+     `bonus_batch.py::parse_bonus_batch_workbook()` 本来就不按 sheet 名字过滤（每个 sheet 都会
+     尝试解析，找不到工号列才跳过），所以这次真正要做的不是"识别哪些 sheet"，而是"sheet 自己没有
+     Entity 列时，怎么从 sheet 名猜出默认实体"。新增 `ingestion/parser.py::
+     entity_hint_from_sheet_name()`：只有当 sheet 名字整个就是一个"裸词"（`^[A-Za-z][A-Za-z0-9]*$`，
+     没有空格/短横线/其他文字混在一起）才会尝试当作实体名，这样能正确拒绝像 `Feb Bonus-PP` 这种
+     "实体名混在其他文字里"的真实历史文件名（那种文件本来就是靠自己的 Entity 列，不需要也不应该
+     被这个新逻辑影响）。**光有"裸词"这一条判断还不够**——开发过程中自己写的回归测试就先抓出一个
+     问题：如果不加限制，一个单纯叫"Bonus"的 sheet 也会被误判成"实体名是 Bonus"。所以又加了一层
+     "这个词是不是系统里已经真实存在的实体"的校验：`ENTITY_ALIASES`（"PP"→"PalmPay"）这种明确
+     维护的别名表直接认，除此之外必须是 `MonthlyEmployeeSnapshot` 里已经出现过的实体名（不分月份，
+     只要历史上任何一个月出现过就算数，大小写不敏感）才会被采信——这个校验列表是
+     `loader.py::_stage_bonus_batch()` 在调用解析函数之前现查数据库现算出来的（`known_entities`
+     参数），不是写死的名单，所以以后再加新实体不需要改代码，只要那个实体的 Formal/Contract 底薪
+     批次先传过一次（现实中的上传顺序本来也是先传底薪批次、奖金批次是月度流程里后传的，这个假设
+     合理）。为了让这个"entity 字段其实是从 sheet 名猜出来的，不是这个 sheet 缺列"的信息能传到
+     字段匹配诊断那一层，避免又出现一次"Entity 未匹配"的假警报（跟这次会话第③项修的
+     basic_salary_actual 诊断误报是同一类问题——已经明确写进"已知的坑"，这次是主动按这个教训去
+     检查、提前避免的，不是又被用户发现一次），`full_fields.py::check_field_mapping()` 新增了
+     `satisfied_elsewhere` 参数（一个"这个字段就当作已经匹配上，不用检查表头"的 key 集合），
+     `ingestion/parser.py::SheetParseResult` 新增了 `entity_hint` 字段，Formal/Contract（第 8
+     项）和奖金批次两边现在都会在有 entity_hint 的时候把 `"entity"` 传进
+     `satisfied_elsewhere`。已经用真实的 API 请求验证过完整链路：先传一个 `Formal-Blooms` 底薪
+     批次确认入库，建立"Blooms 是已知实体"这个前提，再传一个有 `Blooms`/`PP` 两个 sheet（都没有
+     Entity 列）的奖金批次，两个 sheet 的字段匹配诊断都是"24 个全部匹配 ✓"（没有假警报），下载
+     导出的奖金明细里 Entity 列正确显示 `Blooms`/`PalmPay`。新增回归测试
+     `test_entity_hint_from_sheet_name_only_matches_bare_known_entity_names`
+     （`test_ingestion.py`）、`test_bonus_batch_parser_resolves_entity_from_bare_entity_
+     sheet_name`、`test_bonus_batch_parser_does_not_guess_entity_from_descriptive_sheet_
+     name`、`test_confirmed_bonus_batch_resolves_entity_from_sheet_name_end_to_end`
+     （`test_full_fields.py`）。142 个测试全部通过。
 
 ## 未完成 / 待跟进事项
 

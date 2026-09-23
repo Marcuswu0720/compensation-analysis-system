@@ -416,6 +416,88 @@ def test_bonus_batch_parser_reports_missing_fields_and_skips_sheet_without_staff
     assert [r["staff_id"] for r in result.rows] == ["E001"]
 
 
+def test_bonus_batch_parser_resolves_entity_from_bare_entity_sheet_name():
+    """User's planned future convention: standalone 奖金批次 files split by
+    entity into separate sheets named just "PP"/"Blooms"/"Flexi"/"Jupiter",
+    with no Entity column of their own at all - the sheet name itself is the
+    entity. Must resolve entity_raw from the sheet name and NOT report
+    "Entity" as a missing/unmatched field in the diagnostic (that would be
+    the exact same false-alarm class as the basic_salary_actual diagnostic
+    bug fixed earlier this session, on a field that's genuinely never
+    expected to have a column here)."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    headers = [h for h in BONUS_HEADERS if h != "Entity"]
+    row = [None] * len(headers)
+    row[headers.index("Staff ID")] = "E010"
+    row[headers.index("Name")] = "Grace"
+    row[headers.index("HR Cost")] = 400
+    _sheet(wb, "Blooms", headers, [row])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = parse_bonus_batch_workbook(io.BytesIO(buf.getvalue()), known_entities=frozenset({"Blooms"}))
+    assert result.rows[0]["entity_raw"] == "Blooms"
+    report = result.field_mapping_reports[0]
+    assert "entity" not in {m["key"] for m in report.missing}
+
+
+def test_bonus_batch_parser_does_not_guess_entity_from_descriptive_sheet_name():
+    """A real sheet named "Feb Bonus-PP" (entity embedded with other words,
+    not a bare entity name) must keep resolving entity purely from its own
+    Entity column / the matched base employee - not from a guess extracted
+    out of a sheet name that isn't actually just the entity."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    headers = [h for h in BONUS_HEADERS if h != "Entity"]
+    row = [None] * len(headers)
+    row[headers.index("Staff ID")] = "E011"
+    row[headers.index("Name")] = "Hank"
+    row[headers.index("HR Cost")] = 400
+    _sheet(wb, "Feb Bonus-PP", headers, [row])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = parse_bonus_batch_workbook(io.BytesIO(buf.getvalue()))
+    assert result.rows[0]["entity_raw"] is None
+    report = result.field_mapping_reports[0]
+    assert "entity" in {m["key"] for m in report.missing}
+
+
+def test_confirmed_bonus_batch_resolves_entity_from_sheet_name_end_to_end(db_session):
+    """Full stage_upload -> confirm_upload path: once "Blooms" is a known
+    entity (established here by a Formal-Blooms base-batch sheet, matching
+    the realistic upload order - base batch first, standalone bonus batch
+    after), a "Blooms" bonus sheet with no Entity column of its own and no
+    matching base-batch employee (a standalone recipient never listed in the
+    base batch) must still resolve entity="Blooms" in the confirmed
+    SupplementalPaySnapshot row, purely from the sheet name."""
+    base_wb = openpyxl.Workbook()
+    base_wb.remove(base_wb.active)
+    _sheet(base_wb, "Formal-Blooms", ["Staff ID", "Staff Name", "Department 1", "HR Cost"], [["E001", "Alice", "Ops", 1000]])
+    base_buf = io.BytesIO()
+    base_wb.save(base_buf)
+    base_batch = stage_upload(db_session, month="2026-01", file_bytes=base_buf.getvalue(), filename="base.xlsx", uploaded_by="t", salary_type="base")
+    confirm_upload(db_session, base_batch, operator="tester")
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    headers = [h for h in BONUS_HEADERS if h != "Entity"]
+    row = [None] * len(headers)
+    row[headers.index("Staff ID")] = "STANDALONE-BLOOMS"
+    row[headers.index("Name")] = "Ivy"
+    row[headers.index("HR Cost")] = 400
+    _sheet(wb, "Blooms", headers, [row])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="bonus.xlsx", uploaded_by="t", salary_type="bonus")
+    confirm_upload(db_session, batch, operator="tester")
+
+    ivy = db_session.query(SupplementalPaySnapshot).filter(SupplementalPaySnapshot.staff_id == "STANDALONE-BLOOMS").one()
+    assert ivy.entity == "Blooms"
+
+
 def test_bonus_batch_parser_skips_summary_rows():
     wb_bytes = build_full_bonus_workbook([_bonus_row(staff_id="E001"), _bonus_row(staff_id="TOTAL", staff_name="TOTAL", hr_cost=999)])
     result = parse_bonus_batch_workbook(io.BytesIO(wb_bytes))

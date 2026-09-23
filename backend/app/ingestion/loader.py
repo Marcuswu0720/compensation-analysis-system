@@ -155,7 +155,8 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
             # is reused below for every row's salary-component/full-detail
             # extraction instead of being rebuilt per row.
             header_index = build_header_index(sheet_result.rows[0].keys()) if sheet_result.rows else {}
-            total, matched, missing = check_field_mapping(header_index, full_field_specs)
+            satisfied_elsewhere = frozenset({"entity"}) if sheet_result.entity_hint else frozenset()
+            total, matched, missing = check_field_mapping(header_index, full_field_specs, satisfied_elsewhere)
             role_label = "正式工" if salary_role == "formal" else "合同工"
             field_mapping_issues.append(_field_mapping_issue(f"{role_label} sheet「{sheet_result.sheet_name}」", total, matched, missing))
 
@@ -395,7 +396,15 @@ def _stage_bonus_batch(db: Session, month: str, file_bytes: bytes) -> dict:
     every basic-info column the base salary batch already has for the same
     employee, so this applies the identical fallback to all of them instead
     of leaving it as a special case for just three fields."""
-    parsed = parse_bonus_batch_workbook(io.BytesIO(file_bytes))
+    # Every entity already on record anywhere in the system (not scoped to
+    # this month) - lets a bare-entity-named sheet ("Blooms", "Jupiter") be
+    # trusted as an entity hint only for entities that genuinely exist,
+    # never a guess off some unrelated single-word sheet name (see
+    # ingestion/parser.py's entity_hint_from_sheet_name()).
+    known_entities = frozenset(
+        e for (e,) in db.query(MonthlyEmployeeSnapshot.entity).filter(MonthlyEmployeeSnapshot.is_deleted == False).distinct().all() if e  # noqa: E712
+    )
+    parsed = parse_bonus_batch_workbook(io.BytesIO(file_bytes), known_entities)
     resolver = NameResolver(db, month)
     resolver.prepare("department", [r["department1_raw"] for r in parsed.rows])
 
