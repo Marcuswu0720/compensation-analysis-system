@@ -33,10 +33,18 @@ FIELD_ALIASES = {
     "bonus_total": ["HR Cost", "Total"],
 }
 
-# When a sheet has no Entity column of its own, the sheet TYPE implies the entity.
+# When a bonus sheet has no Entity column of its own, the sheet TYPE implies
+# the entity. Formal/Contract base-salary sheets used to have hardcoded
+# per-entity roles here too (contract_pp/contract_flexi -> PalmPay/Flexi),
+# but that only scaled to the two entities that existed when it was written -
+# a real file with a third entity (e.g. "Formal-Blooms"/"Contract-Blooms")
+# had no role to match at all and silently ended up in unrecognized_sheet.
+# Formal/Contract sheets now resolve their default entity dynamically from
+# whatever suffix follows the sheet name (see parser.py's
+# match_base_sheet_role()/default_entity_for_suffix()) instead of a fixed
+# per-entity list, so a newly onboarded entity's sheets are recognized
+# without a code change.
 SHEET_DEFAULT_ENTITY = {
-    "contract_pp": "PalmPay",
-    "contract_flexi": "Flexi",
     "bonus_pp": "PalmPay",
     "bonus_flexi": "Flexi",
 }
@@ -46,26 +54,29 @@ SHEET_DEFAULT_ENTITY = {
 # catch them on its own) - e.g. the Contract-PP sheet's own Entity column
 # sometimes literally says "PP" rather than "PalmPay". Entities are a small,
 # stable closed set (unlike departments), so a short seed list here is safe.
+# Also used by parser.py's default_entity_for_suffix() to canonicalize a
+# Formal/Contract sheet's own entity suffix (e.g. "Formal-PP" -> "PalmPay").
 ENTITY_ALIASES = {
     "pp": "PalmPay",
 }
 
-# Regex patterns per sheet "role". Bonus patterns must be bidirectional: some
-# months name it "PP-Jan bonus", others "April Bonus-PP" (label after entity).
+# Regex patterns per sheet "role" - covers everything EXCEPT the Formal/
+# Contract base-salary sheets, which are matched dynamically by parser.py's
+# match_base_sheet_role() instead of a fixed pattern list (see
+# SHEET_DEFAULT_ENTITY's comment above for why). Bonus patterns must be
+# bidirectional: some months name it "PP-Jan bonus", others "April Bonus-PP"
+# (label after entity).
 SHEET_PATTERNS = {
-    "formal": [r"^Formal$"],
-    "contract_pp": [r"Contract.*PP", r"PP.*Contract"],
-    "contract_flexi": [r"Contract.*Flexi", r"Flexi.*Contract"],
     "exits": [r"Exit", r"离职"],
     "bonus_pp": [r"PP.*[Bb]onus", r"[Bb]onus.*PP"],
     "bonus_flexi": [r"Flexi.*[Bb]onus", r"[Bb]onus.*Flexi"],
 }
 
 # Order matters: a sheet is claimed by the first role whose pattern matches it,
-# so more specific bonus/contract patterns are checked before anything looser.
-SHEET_ROLE_ORDER = ["formal", "contract_pp", "contract_flexi", "exits", "bonus_pp", "bonus_flexi"]
+# so more specific bonus patterns are checked before anything looser.
+SHEET_ROLE_ORDER = ["exits", "bonus_pp", "bonus_flexi"]
 
-EMPLOYEE_SHEET_KEYS = ["formal", "contract_pp", "contract_flexi"]
+EMPLOYEE_SHEET_KEYS = ["formal", "contract"]
 BONUS_SHEET_KEYS = ["bonus_pp", "bonus_flexi"]
 
 # Trailing summary/subtotal rows at the bottom of a sheet re-use the staff_id

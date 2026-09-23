@@ -1,11 +1,15 @@
+import io
 import json
+
+import openpyxl
 
 from app.compute.attribution import compute_attribution
 from app.compute.trends import get_trend, list_departments, list_entities
 from app.ingestion.commit import confirm_upload
 from app.ingestion.loader import stage_upload
+from app.ingestion.parser import default_entity_for_suffix, match_base_sheet_role
 
-from .xlsx_fixtures import build_month1_workbook, build_month2_workbook
+from .xlsx_fixtures import _sheet, build_month1_workbook, build_month2_workbook
 
 
 def _upload_and_confirm(db, month, content):
@@ -108,3 +112,64 @@ def test_reupload_overwrites_prior_confirmed_month(db_session):
 
     trend = get_trend(db_session, months=["2026-01"])
     assert trend[0]["headcount"] == 5
+
+
+# ---------- match_base_sheet_role() / default_entity_for_suffix(): new-entity onboarding ----------
+
+
+def test_match_base_sheet_role_recognizes_entity_suffix_in_either_order():
+    """Regression test: a real user file had a third entity ("Blooms") with
+    its own Formal/Contract sheets - the old sheet-role matching only knew
+    about two hardcoded entities (PP/Flexi), so a bare "Contract" sheet and
+    any "-Blooms" suffixed sheet ended up entirely unrecognized
+    (unrecognized_sheet), not just missing a field or two."""
+    assert match_base_sheet_role("Formal") == ("formal", None)
+    assert match_base_sheet_role("contract") == ("contract", None)  # bare, lowercase - previously had no pattern at all
+    assert match_base_sheet_role("Formal-Blooms") == ("formal", "Blooms")
+    assert match_base_sheet_role("Contract-Blooms") == ("contract", "Blooms")
+    assert match_base_sheet_role("Formal-Jupiter") == ("formal", "Jupiter")
+    assert match_base_sheet_role("Contract-Jupiter") == ("contract", "Jupiter")
+    assert match_base_sheet_role("Contract - PP") == ("contract", "PP")  # suffix after, spaced dash
+    assert match_base_sheet_role("PP-Contract") == ("contract", "PP")  # suffix before
+    assert match_base_sheet_role("Exit") is None
+    assert match_base_sheet_role("PP-Dec bonus") is None
+
+
+def test_default_entity_for_suffix_uses_alias_map_and_capitalizes():
+    assert default_entity_for_suffix("PP") == "PalmPay"  # ENTITY_ALIASES
+    assert default_entity_for_suffix("Blooms") == "Blooms"  # already capitalized, left alone
+    assert default_entity_for_suffix("blooms") == "Blooms"  # all-lowercase sheet name -> title-cased
+
+
+def test_stage_base_recognizes_new_entity_sheets_without_hardcoding(db_session):
+    """End-to-end version: a workbook with a bare (lowercase) "contract"
+    sheet and a brand-new entity's Formal/Contract sheets ("Formal-Blooms"/
+    "Contract-Blooms", neither with their own Entity column) must all be
+    recognized and staged - none of them should show up in unrecognized_sheet,
+    and the Blooms rows must resolve to entity="Blooms" via the sheet-name
+    suffix default, exactly like Contract-PP/-Flexi already did for PalmPay/
+    Flexi."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _sheet(wb, "Formal", ["Staff ID", "Staff Name", "Entity", "Department 1", "HR Cost"], [["E001", "Alice", "PalmPay", "Sales", 1000]])
+    _sheet(wb, "contract", ["Staff ID", "Staff Name", "Entity", "Department 1", "HR Cost"], [["E002", "Bob", "PalmPay", "Sales", 500]])
+    _sheet(wb, "Formal-Blooms", ["Staff ID", "Staff Name", "Department 1", "HR Cost"], [["E003", "Carol", "Ops", 800]])
+    _sheet(wb, "Contract-Blooms", ["Staff ID", "Staff Name", "Department 1", "HR Cost"], [["E004", "Dave", "Ops", 300]])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    batch = stage_upload(db_session, month="2026-01", file_bytes=buf.getvalue(), filename="x.xlsx", uploaded_by="t")
+    payload = json.loads(batch.staged_data)
+
+    issue_details = [i["issue_detail"] for i in payload["issues"] if i["issue_type"] == "unrecognized_sheet"]
+    assert issue_details == []
+
+    by_id = {e["staff_id"]: e for e in payload["employees"]}
+    assert by_id["E001"]["employment_type"] == "Formal" and by_id["E001"]["entity"] == "PalmPay"
+    assert by_id["E002"]["employment_type"] == "Contract" and by_id["E002"]["entity"] == "PalmPay"
+    assert by_id["E003"]["employment_type"] == "Formal" and by_id["E003"]["entity"] == "Blooms"
+    assert by_id["E004"]["employment_type"] == "Contract" and by_id["E004"]["entity"] == "Blooms"
+    assert payload["summary"]["headcount_total"] == 4
+
+    confirm_upload(db_session, batch, operator="tester")
+    assert set(list_entities(db_session)) == {"PalmPay", "Blooms"}

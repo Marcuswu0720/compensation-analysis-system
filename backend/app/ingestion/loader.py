@@ -32,8 +32,6 @@ from .supplemental import parse_supplemental_workbook
 
 SALARY_TYPES = ("base", "bonus", "backpay")
 
-ROLE_LABEL = {"formal": "正式工", "contract_pp": "合同工(PP)", "contract_flexi": "合同工(Flexi)"}
-
 
 def shift_month(month: str, offset: int) -> str:
     year, mon = (int(x) for x in month.split("-"))
@@ -121,9 +119,14 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
     # Pass 1: tally every raw department/entity label in the whole workbook so
     # canonical forms are stable before any row gets tagged (see normalize.py
     # docstring for why this must happen before the per-row resolve() calls).
+    all_base_sheets = [s for role in EMPLOYEE_SHEET_KEYS for s in parsed.base_sheets[role]]
     raw_depts: list = []
     raw_entities: list = []
-    for role in EMPLOYEE_SHEET_KEYS + BONUS_SHEET_KEYS + ["exits"]:
+    for sheet_result in all_base_sheets:
+        for row in sheet_result.rows:
+            raw_depts.append(get(row, sheet_result.header_map, "department1"))
+            raw_entities.append(get(row, sheet_result.header_map, "entity"))
+    for role in BONUS_SHEET_KEYS + ["exits"]:
         sheet_result = parsed.by_role.get(role)
         if not sheet_result:
             continue
@@ -137,64 +140,61 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
     gross_mismatch_count = 0
     field_mapping_issues: list[dict] = []
     for role in EMPLOYEE_SHEET_KEYS:
-        sheet_result = parsed.by_role.get(role)
-        # NOTE: parse_workbook() always populates every role key with a
-        # SheetParseResult (sheet_name=None, rows=[] when nothing matched) -
-        # `sheet_result` itself is never falsy, so the check has to be on
-        # sheet_name, not truthiness of the dataclass instance. Getting this
-        # wrong wouldn't affect the row loop below (it just does 0 iterations
-        # on an empty list either way), but it WOULD make the field-mapping
-        # diagnostic below fire a bogus "0/N matched" report for a sheet that
-        # was never in the file at all (e.g. no Contract-Flexi this month).
-        if sheet_result is None or sheet_result.sheet_name is None:
-            continue
-        salary_role = "formal" if role == "formal" else "contract"
-        full_field_specs = FORMAL_FIELDS if salary_role == "formal" else CONTRACT_FIELDS
+        # A workbook can carry any number of Formal/Contract sheets, one per
+        # entity ("Formal", "Formal-Blooms", "Formal-Jupiter", ...) - see
+        # parser.py's match_base_sheet_role(). Every sheet under a role is
+        # processed identically; only the sheet's own Entity column (or its
+        # entity-suffix default, already baked into each row via
+        # __default_entity__ - see parser.get()) distinguishes them.
+        for sheet_result in parsed.base_sheets[role]:
+            salary_role = role  # "formal" | "contract" - already the exact string extract_salary_components()/full_fields.py expect
+            full_field_specs = FORMAL_FIELDS if salary_role == "formal" else CONTRACT_FIELDS
 
-        # PRD V1.8 §4: the field-mapping diagnostic only needs the sheet's
-        # header row, not a pass over every row - and the SAME header_index
-        # is reused below for every row's salary-component/full-detail
-        # extraction instead of being rebuilt per row.
-        header_index = build_header_index(sheet_result.rows[0].keys()) if sheet_result.rows else {}
-        total, matched, missing = check_field_mapping(header_index, full_field_specs)
-        field_mapping_issues.append(_field_mapping_issue(f"{ROLE_LABEL.get(role, role)} sheet「{sheet_result.sheet_name}」", total, matched, missing))
+            # PRD V1.8 §4: the field-mapping diagnostic only needs the sheet's
+            # header row, not a pass over every row - and the SAME header_index
+            # is reused below for every row's salary-component/full-detail
+            # extraction instead of being rebuilt per row.
+            header_index = build_header_index(sheet_result.rows[0].keys()) if sheet_result.rows else {}
+            total, matched, missing = check_field_mapping(header_index, full_field_specs)
+            role_label = "正式工" if salary_role == "formal" else "合同工"
+            field_mapping_issues.append(_field_mapping_issue(f"{role_label} sheet「{sheet_result.sheet_name}」", total, matched, missing))
 
-        for row in sheet_result.rows:
-            sid = get(row, sheet_result.header_map, "staff_id")
-            if not sid:
-                continue
-            sid = str(sid).strip()
-            is_active, status_date = _is_active_employee(role, row, sheet_result.header_map)
-            dept_raw = get(row, sheet_result.header_map, "department1")
-            entity_raw = get(row, sheet_result.header_map, "entity")
-            components = extract_salary_components(row, salary_role, header_index)
-            if components.pop("gross_salary_component_mismatch"):
-                gross_mismatch_count += 1
+            for row in sheet_result.rows:
+                sid = get(row, sheet_result.header_map, "staff_id")
+                if not sid:
+                    continue
+                sid = str(sid).strip()
+                is_active, status_date = _is_active_employee(role, row, sheet_result.header_map)
+                dept_raw = get(row, sheet_result.header_map, "department1")
+                entity_raw = get(row, sheet_result.header_map, "entity")
+                components = extract_salary_components(row, salary_role, header_index)
+                if components.pop("gross_salary_component_mismatch"):
+                    gross_mismatch_count += 1
 
-            # PRD V1.6 §2.1: capture the remaining fields (Department 2/3,
-            # Position, attendance/deduction detail, etc.) the ~10 analysis
-            # columns above never covered - see ingestion/full_fields.py.
-            new_descriptive, detail_json_fields, _ = extract_full_detail(
-                row, full_field_specs, top_level_keys=NEW_DESCRIPTIVE_KEYS, exclude_keys=ANALYSIS_KEYS | TOP_LEVEL_DESCRIPTIVE_KEYS, header_index=header_index
-            )
+                # PRD V1.6 §2.1: capture the remaining fields (Department 2/3,
+                # Position, attendance/deduction detail, etc.) the ~10 analysis
+                # columns above never covered - see ingestion/full_fields.py.
+                new_descriptive, detail_json_fields, _ = extract_full_detail(
+                    row, full_field_specs, top_level_keys=NEW_DESCRIPTIVE_KEYS, exclude_keys=ANALYSIS_KEYS | TOP_LEVEL_DESCRIPTIVE_KEYS, header_index=header_index
+                )
 
-            employees[sid] = {
-                "staff_id": sid,
-                "staff_name": get(row, sheet_result.header_map, "staff_name"),
-                "entity": resolver.resolve("entity", entity_raw),
-                "entity_raw": entity_raw,
-                "employment_type": "Formal" if role == "formal" else "Contract",
-                "department1": resolver.resolve("department", dept_raw),
-                "department1_raw": dept_raw,
-                "job_grade": get(row, sheet_result.header_map, "job_grade"),
-                "hr_cost": float(get(row, sheet_result.header_map, "hr_cost") or 0),
-                "is_active": is_active,
-                "resign_or_exit_date": status_date,
-                "source_sheet": sheet_result.sheet_name,
-                **components,
-                **new_descriptive,
-                "full_detail_json": json.dumps(detail_json_fields),
-            }
+                employees[sid] = {
+                    "staff_id": sid,
+                    "staff_name": get(row, sheet_result.header_map, "staff_name"),
+                    "entity": resolver.resolve("entity", entity_raw),
+                    "entity_raw": entity_raw,
+                    "employment_type": "Formal" if role == "formal" else "Contract",
+                    "department1": resolver.resolve("department", dept_raw),
+                    "department1_raw": dept_raw,
+                    "job_grade": get(row, sheet_result.header_map, "job_grade"),
+                    "hr_cost": float(get(row, sheet_result.header_map, "hr_cost") or 0),
+                    "is_active": is_active,
+                    "resign_or_exit_date": status_date,
+                    "source_sheet": sheet_result.sheet_name,
+                    **components,
+                    **new_descriptive,
+                    "full_detail_json": json.dumps(detail_json_fields),
+                }
 
     bonuses: list[dict] = []
     for role, entity_hint in (("bonus_pp", "PalmPay"), ("bonus_flexi", "Flexi")):
@@ -299,7 +299,10 @@ def _stage_base(db: Session, month: str, file_bytes: bytes) -> dict:
             "total_hr_cost": total_hr_cost,
             "prev_month_headcount": prev_month_headcount,
             "headcount_delta": (len(all_employees) - prev_month_headcount) if prev_month_headcount else None,
-            "sheets_found": {role: r.sheet_name for role, r in parsed.by_role.items()},
+            "sheets_found": {
+                **{role: r.sheet_name for role, r in parsed.by_role.items()},
+                **{role: [s.sheet_name for s in sheets] for role, sheets in parsed.base_sheets.items()},
+            },
         },
     }
     return staged_data

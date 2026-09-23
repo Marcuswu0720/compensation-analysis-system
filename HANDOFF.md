@@ -121,13 +121,15 @@
      上传"）以后遇到类似"老数据显示不对"的反馈时要先分清楚是哪一种。
 - **V1.9 热修复之后的第二轮**（本次会话，起点是用户用真实一月导出文件复核后反馈"扣款金额依旧
   丢失"+"奖金基础信息依旧丢失"，过程中用户又陆续用真实文件/真实操作反馈了另外几个问题，全部在
-  同一轮会话里处理。七项：① 正式工/合同工扣款金额字段别名猜错 ② 奖金批次基础信息缺兜底
+  同一轮会话里处理。八项：① 正式工/合同工扣款金额字段别名猜错 ② 奖金批次基础信息缺兜底
   ③ Contract 的 basic_salary_actual 诊断误报 ④ 奖金上传遇到裸 `datetime.time` 单元格直接崩溃
   ⑤ "薪资类目"页面"人力成本合计"漏加奖金/补发批次 ⑥ 导出接口疑似内存问题导致整个服务崩溃重启
   （**只诊断、没有修复**，见"未完成事项"）⑦ Mac（桌面 Safari）上传数据页完全不可用（月份选不了
-  /传不了数据，`<input type="month">` 在桌面 Safari 上从来没被实现过）。前五项和第七项每次改完
-  都单独 commit + push 到 `claude/data-export-field-loss-fix-bsy02i`，并在用户确认后合并进线上
-  分支 `claude/compensation-analysis-site-un8j4k`（均为快进合并，无冲突；有一次因为线上分支同期
+  /传不了数据，`<input type="month">` 在桌面 Safari 上从来没被实现过）⑧ 上传时新实体（Blooms/
+  Jupiter 等）的 Formal/Contract sheet 完全不被识别（sheet 名字识别逻辑硬编码死了只认 PP/
+  Flexi 两个实体）。除了第⑥项，其余每项改完都单独 commit + push 到
+  `claude/data-export-field-loss-fix-bsy02i`，并在用户确认后合并进线上分支
+  `claude/compensation-analysis-site-un8j4k`（大多是快进合并，无冲突；有一次因为线上分支同期
   被另一个会话加了双语 UI 功能，改成了普通合并，文件没有重叠，依旧无冲突）。以下是每一项的细节：
   1. **正式工/合同工"扣款金额"字段的别名guess错误**——`FORMAL_FIELDS` 里
      `late_deduction`/`porated_days_deduction`/`absent_deduction` 三个字段的 `source_aliases`
@@ -226,6 +228,39 @@
      体验下、非技术用户把几个现象混在一起描述——如果这次月份选择器的修复上线后，用户反馈"过往
      记录"这条依然单独存在（月份能选、能上传了，但历史列表还是看不到），需要用户再单独确认一次，
      那就是另一个独立的坑，不能假设已经一并解决了。
+  8. **上传时新实体（Blooms/Jupiter）的 Formal/Contract sheet 完全识别不到**（用户上传历史
+     数据时反馈，用户明确列出了完整的命名规则：`Formal`/`Contract` 对应不分实体的全体正式工/
+     合同工，`Formal-Blooms`/`Contract-Blooms`、`Formal-Jupiter`/`Contract-Jupiter`、
+     `Formal-Flexi`/`Contract-Flexi` 分别对应各个实体自己的 sheet）——根因是
+     `ingestion/constants.py` 的 `SHEET_PATTERNS` 从一开始就是按"正式工只有一种 sheet
+     （`^Formal$`），合同工只有 PP/Flexi 两种（`Contract.*PP`/`Contract.*Flexi`）"这个假设
+     硬编码的，新实体的 sheet（甚至只是一个大小写不同的裸 `contract`，没有 PP/Flexi 字样）
+     根本没有对应的 pattern，会直接进 `unrecognized_sheet`，数据完全丢失，不是某几个字段
+     缺失这种程度的问题。这次没有再加几条新的硬编码 pattern（那样下次再加一个实体又要改一次
+     代码），而是把 Formal/Contract 的 sheet 识别方式换成动态提取："Formal"/"Contract"
+     这个角色词本身 + 可选的实体后缀"两部分，后缀可以在角色词前面也可以在后面（`Contract -
+     PP`、`PP-Contract` 都认），用空格/短横线/下划线隔开即可（`ingestion/parser.py` 新增
+     `match_base_sheet_role()`）；后缀再通过 `default_entity_for_suffix()`（复用已有的
+     `ENTITY_ALIASES`，"PP"→"PalmPay"这条不用重复定义）算出这个 sheet 没有自己 Entity
+     列时的默认实体值。`WorkbookParseResult` 新增了 `base_sheets: dict[str, list[
+     SheetParseResult]]` 字段（`formal`/`contract` 各自一个列表，因为现在一个 workbook 里
+     可能有任意多个不同实体的 Formal/Contract sheet，不再是"每个角色最多一个 sheet"的假设），
+     `loader.py::_stage_base()` 相应改成对列表里每个 sheet 都跑一遍同样的解析逻辑。
+     `EMPLOYEE_SHEET_KEYS` 从 `["formal", "contract_pp", "contract_flexi"]` 简化成
+     `["formal", "contract"]`，`ROLE_LABEL`（"合同工(PP)"这种硬编码标签）整个删掉了，诊断
+     信息直接用真实 sheet 名。**这次改动完全没有改字段级别的解析逻辑**（`extract_salary_
+     components`/`extract_full_detail` 等从一开始就只按 `"formal"`/`"contract"` 两个值分支，
+     PP/Flexi 的区分只存在于"找哪个 sheet"这一层，不存在于"怎么解析这个 sheet 里的字段"这一层，
+     所以这次改动的影响面比看起来的要小）。已经用真实的 API 请求（不只是单元测试）验证过：一个
+     带 `Formal`/`contract`（裸、小写）/`Formal-Blooms`/`Contract-Blooms` 四个 sheet 的
+     workbook 能正常解析出 4 个人、Blooms 的两个 sheet 正确落到 entity="Blooms"、不再出现
+     `unrecognized_sheet`。新增回归测试 `test_match_base_sheet_role_recognizes_entity_
+     suffix_in_either_order`、`test_default_entity_for_suffix_uses_alias_map_and_
+     capitalizes`、`test_stage_base_recognizes_new_entity_sheets_without_hardcoding`
+     （`test_ingestion.py`）。**这次只改了 Formal/Contract（底薪批次）的 sheet 识别，奖金批次
+     的 `bonus_pp`/`bonus_flexi` 依旧是老的硬编码 PP/Flexi 两种，没有推广**——如果以后新实体
+     也要单独上传奖金批次、且命名规律类似（比如 `Bonus-Blooms`），需要照着同样的思路对
+     `bonus_pp`/`bonus_flexi` 做一次类似的泛化，而不是再加两个新的硬编码角色。
 
 ## 未完成 / 待跟进事项
 
@@ -341,12 +376,23 @@
 
 ## 部署信息
 
-- Render Blueprint 部署（`render.yaml`）。**本次会话实际观察确认**：仓库里根本没有 `main`
-  分支（`git branch -a` 只有两个 `claude/*` 分支），线上 Render 服务实际跟踪、推送后会自动重新
-  构建部署的是 `claude/compensation-analysis-site-un8j4k`——本次会话四次推送到这个分支，日志里
-  都能看到对应的 `==> Running 'python -m uvicorn...'` 重启记录。之前几版 HANDOFF 里"push 到
-  main 才部署、还没合并到 main"的说法已经不准确，予以更正：**这个分支本身就是当前的部署分支**，
-  不需要等合并到某个不存在的 `main` 才生效。
+- Render Blueprint 部署（`render.yaml`）。仓库里根本没有 `main` 分支（`git branch -a` 只有两个
+  `claude/*` 分支），线上 Render 服务实际连接、配置了"推送后自动部署"的是
+  `claude/compensation-analysis-site-un8j4k`——之前几版 HANDOFF 里"push 到 main 才部署、还没
+  合并到 main"的说法不准确，这个分支本身就是当前的部署分支，不需要等合并到某个不存在的 `main`。
+- **但"推送后自动部署"这一步本次会话亲身踩过坑，不能想当然认为"push 了就等于线上生效了"**：
+  合并到 `claude/compensation-analysis-site-un8j4k` 后，用户反馈 Mac 上看到的还是修复前的旧
+  页面；一开始怀疑是浏览器缓存，但去 Render 的 Deploys 页面核实后发现——**最新的推送根本没有
+  触发自动部署**，Deploys 列表最上面（Live）的那条还是好几个提交之前的旧记录。日志里能看到的
+  `==> Instance restarted`/`Running 'python -m uvicorn...'` 记录**不能当作"部署了新代码"的
+  证据**——这两者是完全不同的东西：容器因为别的原因（比如已经诊断过的下载大文件导致 OOM）被
+  平台重启，只是把同一份旧代码重新跑起来，跟拉取新提交、重新构建完全无关；只有 Deploys 页面
+  列表里出现新的一条、并且标成 Live，才说明新代码真的上线了。这次是让用户手动点击右上角
+  **"Manual Deploy" → "Deploy latest commit"** 才解决的。**以后每次合并推送到这个分支之后，
+  如果用户反馈"看起来没生效"，第一反应应该是让用户去 Deploys 页面核对最新一条部署对应的
+  commit，而不是先假设是缓存问题**——缓存问题当然也可能存在，但部署没触发是更值得先排除的
+  可能性，且更容易验证（直接看 Deploys 列表）。这个沙盒环境连不上 Render 后台，没法主动触发
+  或核实部署，只能靠用户截图确认。
 - SQLite 数据库文件挂载在 Render 的持久磁盘上（`/var/data/app.db`），`SECRET_KEY` 由 Render
   自动生成，`ADMIN_USERNAME`/`ADMIN_PASSWORD` 需要在 Render 后台手动配置（`sync: false`）。
 - 本地测试：`cd backend && python -m pytest tests/ -v`，测试全部用合成数据
